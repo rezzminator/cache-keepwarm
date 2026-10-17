@@ -1,0 +1,4 @@
+{
+  "description": "Tracked-wait prompt-cache warming with session-local control and a live savings ledger.",
+  "modules": ["./cache-keepwarm.ts"]
+}

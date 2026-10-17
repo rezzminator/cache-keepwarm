@@ -1,0 +1,184 @@
+<div align="center">
+
+# cache-keepwarm
+
+**Keeps the main Claude Code chat's prompt cache warm while it waits on background agents, shell commands, Monitors and workflows: one invisible replay of the last request before the cache expires, admitted only while the forecast spend stays under the rewrite it saves.**
+
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue)](./CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+
+</div>
+
+> **Status.** 0.1.0 is an initial local build: unreleased, with no remote repository yet. The live proof sequences that gate publication have not all run on this tree; § Development states what a release requires. A 1h cache is not warmed (§ Limits).
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Install](#install)
+- [Why an invisible replay](#why-an-invisible-replay)
+- [Commands](#commands)
+- [The band](#the-band)
+- [When it warms](#when-it-warms)
+- [Status texts](#status-texts)
+- [Configuration](#configuration)
+- [TTL resolution](#ttl-resolution)
+- [Budget and ledger](#budget-and-ledger)
+- [Limits](#limits)
+- [Development](#development)
+- [Credits](#credits)
+
+## What it does
+
+Claude Code caches the prompt for 5 minutes or 1 hour. A chat that waits on a long background agent or command goes idle, the cache lapses, and the next request writes the whole context again.
+
+When the main chat ends a turn with tracked work pending, cache-keepwarm arms one timer for 80% of the cache lifetime after the last request was sent. When it fires and the chat is still idle and still waiting, the plugin calls `$.model.fork`, which re-sends the main thread's last request unchanged, so the provider reads and thereby refreshes the cached prefix. The replay adds nothing to the transcript, starts no turn and fires no prompt, turn or step hook of another plugin (observed in one run). The fork itself is a hookable engine operation, so a plugin that hooks model calls can see it.
+
+It waits on four kinds of tracked work: agents, commands, Monitors and workflows. The next main request (a completion notification, your prompt, anything) ends the episode before another warm can fire. It serves the main chat only.
+
+## Install
+
+The repository has no remote yet, so the commands below apply once it is published (remote-not-yet-created):
+
+```sh
+export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
+claude plugin marketplace add rezzminator/cache-keepwarm
+claude plugin install cache-keepwarm@cache-keepwarm
+```
+
+`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` also works in the `env` block of `settings.json`. The plugin is built against the plugin types of Claude Code 2.1.302 and needs a release with function hooks; function hooks are early access and may change between releases.
+
+## Why an invisible replay
+
+A visible prompt ("send a warm-up message") would be the literal reading of keeping a chat warm. This plugin replays the request instead, for these reasons:
+
+- A visible warm adds two transcript rows each time and cache writes that compaction later carries.
+- Other plugins plan a plugin-submitted prompt: an effort planner can change the next request's effort, a cache-keyed parameter.
+- The plugin cannot drop its own stale queued prompt, because a plugin's own submit skips its calling hook.
+- A visible reply can spend many output tokens on a small model; the replay's prompt is fixed text, `Cache keep-warm only. Reply exactly K. No tools.`, and carries no task label.
+
+Because nothing appears in the conversation, the status line and the band say what is warmed and why.
+
+## Commands
+
+`/keepwarm` is answered by the plugin with no model turn and takes effect at once, for this chat only; nothing is written to a settings file.
+
+| Form | Effect |
+| --- | --- |
+| `/keepwarm` | Print the state: on or off and whether that is the launch default or the override, the current wait, the latest decision, actual spend against the allowance |
+| `/keepwarm status` | Same as no argument |
+| `/keepwarm on` | Override a disabled launch default; warming waits for the next qualifying Stop |
+| `/keepwarm off` | Cancel the armed warm and end the episode; an admitted replay still accounts its usage but cannot re-arm |
+
+Any other argument prints the usage and changes nothing. A new session or `/clear` resets the override to the launch default (`enabled`).
+
+## The band
+
+One row above the prompt shows a cache-state dot, the reason or current wait, a toggle and the ledger. Its toggle runs the same operation as `/keepwarm on|off`. The row is skipped while a survey is shown. `band` set to `false` hides only the row; the status line, the command and the warming are unaffected.
+
+After a returning wait, one closing toast gives the elapsed time, the actual cache-read percentage of the returning request and an explicitly estimated net saving. The last outcome stays in the band and in `/keepwarm`; the toast is never a model prompt or a transcript turn.
+
+## When it warms
+
+Every timer fire is a decision made by one pure function; each outcome (warm, skip, stop) carries a short reason code that is shown with the status and written to the log. It does not warm:
+
+- while a main turn runs, or while you type: a draft edit invalidates the episode at once, and warming resumes only after the next qualifying main Stop;
+- when the cache is cold, or within 15 seconds of expiry, a window too close for a request to land;
+- when nothing tracked is pending, when everything pending is finished, killed or failed, or when the only tracked work is of a kind not known to wake the chat (such an item is shown, and refuses with `wake-unknown`);
+- when work is known to return before the cache expires: known timing comes from structured facts only, and an unknown return time is shown as unknown, never guessed from a task description or a command's text;
+- when the plugin's own wait window ends before the cache does;
+- when every pending item has passed `maxWaitMinutes`;
+- when the forecast saving is marginal, or the budget is spent (§ Budget and ledger);
+- after a failure of the replay, with no retry.
+
+The anchor for the timer is the last main request that read or wrote the cache; a response with no cache use invalidates earlier warmth instead of renewing it. The timer fires at 80% of the lifetime after that anchor; a candidate at or after the anchor plus the lifetime minus 15 seconds is refused as `expiry-safety`, and a fully expired cache as `cache-cold`.
+
+## Status texts
+
+The status line is one line, retexted once a minute while an episode is armed; a stop notice persists until the next main turn.
+
+- Waiting: `cache-keepwarm · waiting on agent "Audit the release notes" +1 more · 9m · warms 2 · next in 3m`; an assumed lifetime appends ` · TTL assumed 5m`; an elapsed time of 65 minutes reads `1h05m`.
+- Not warming: `cache-keepwarm · not warming: context 19,999 tokens is under the 20,000 minimum`, `not warming: no main request seen since the plugin loaded`, `not warming: 1h refresh unproven`.
+- Stopped: `cache-keepwarm · stopped: ` followed by one reason: `agent "X" pending 180m with no result, liveness unknown` · `the next warm would cost more than the rewrite it saves (10 warms)` · `the cache had already lapsed (timer fired 4m late)` · `agent "X" was killed` · `warm failed (api-error 529)` · `timer failed ({message})` · `this Claude Code gives the Stop hook no background_tasks`.
+- Log: `cache-keepwarm · log write failed ({message})`, shown once; warming continues.
+
+Labels (an agent's description, a command line) are sanitized to 40 characters plus an ellipsis for display and appear nowhere else.
+
+## Configuration
+
+Five options, set in the plugin's `/config` page or by variable:
+
+| Variable | Option | Default | Meaning |
+| --- | --- | --- | --- |
+| `CACHE_KEEPWARM_ENABLED` | `enabled` | `true` | Warm at all; `/keepwarm` overrides it for one chat |
+| `CACHE_KEEPWARM_MIN_CONTEXT` | `minContext` | `20000` | Smallest context in tokens worth warming |
+| `CACHE_KEEPWARM_MAX_WAIT_MINUTES` | `maxWaitMinutes` | `180` | Minutes an item may stay pending, counted from its first sighting, before it stops justifying a warm |
+| `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for `{session id}.jsonl`, a metadata-only decision log of at most 500 rows; empty writes none |
+| `CACHE_KEEPWARM_BAND` | `band` | `true` | Show the row above the prompt |
+
+Precedence is variable, then option, then default. A blank variable is absent; booleans read `1`, `0`, `true` or `false` in any case. A bad variable is named in the status and the option's default applies, never the configured option. The log never contains a label, command or description.
+
+## TTL resolution
+
+The cache lifetime is resolved per episode, first match wins:
+
+1. `FORCE_PROMPT_CACHING_5M=1`: 5m.
+2. `CLAUDE_CODE_PROMPT_CACHE_TTL` equal to `5m` or `1h`: that value.
+3. The session's observed lifetime: a request sent 330,000 to 3,300,000 ms after the previous one that read at least 90% of the previous context means 1h; below 90% means 5m; outside that gap there is no evidence.
+4. `ENABLE_PROMPT_CACHING_1H=1`: 1h.
+5. Otherwise 5m, shown as `TTL assumed 5m`. An assumed 5m is never late, only more frequent.
+
+## Budget and ledger
+
+One producer owns the arithmetic. Costs are input-token equivalents (read 0.1, cache write 1.25 at 5m and 2.0 at 1h, plain input 1, output 5), not dollars; USD appears only if the engine exposes a verified price.
+
+- Saved by one avoided rewrite: `context × (write − 0.1)`.
+- Spent by a warm, from the replay's usage: `read × 0.1 + creation × 2.0 + input × 1 + output × 5`.
+- Forecast of the next warm: `context × 0.1 + tail × 2.0 + 64 + 256 × 5`, where `tail` is the last response's output tokens on the episode's first warm and 0 after.
+- A warm is allowed while `spent + forecast ≤ saved` and `saved − spent − forecast ≥ 0.1 × forecast`, so a warm whose saving is marginal is declined.
+
+Worked example, a 5m cache on Haiku with a 50,552-token context and the usage shape of a replay that read 49,745 tokens, wrote 807, took 25 plain input tokens and produced 3 output tokens:
+
+- One rewrite saved: 58,134.8.
+- First warm: forecast 8,013.2, actual spend 6,628.5.
+- Later warms forecast 6,399.2; ten warms spend a total of 52,485.3.
+- The eleventh would reach 58,884.5, above 58,134.8: refused with `the next warm would cost more than the rewrite it saves (10 warms)`.
+
+The budget is an admission forecast plus actual accounting, not a hard realized-spend limit: the engine's fork is uncapped, so an admitted replay can cost more than forecast (a longer reply, a larger write), and the episode then stops at the next check. A wait that outlasts the budget still ends in a rewrite.
+
+The band, `/keepwarm`, the log and the closing toast show the same ledger: actual spend, the allowance (write minus read saving), and `protecting`, the gross cost of the rewrite the warm may avoid. `protecting` is hypothetical, not a realized saving. The closing net is an estimate, not a measured counterfactual: it credits one avoided rewrite minus warm spend only for a same-prefix return after the original expiry with at least 90% cache read. A return before the original expiry, or a miss, closes at minus the spend; unknown usage closes as unknown, never zero.
+
+## Limits
+
+- No hang detection. Claude Code exposes no activity time for a task, so a pending item is "liveness unknown" once `maxWaitMinutes` passes; it is never declared hung.
+- No cap on a replay. The engine's fork has no output cap or cancel, so the budget is a forecast before each replay plus actual accounting after; there is no hard realized-spend limit, and an admitted replay cannot be cancelled.
+- No sub-agent waits. Only the main chat is served.
+- No wait on the user. Only tracked background work warms the cache.
+- No 1h warming yet. Whether a replay refreshes a 1h entry is unproven; the first live attempt was void (its returning request and replay failed authentication, so it holds no valid refresh measurement), which is no evidence either way. A 1h episode shows `not warming: 1h refresh unproven` until a valid live run proves the refresh.
+- Unknown wake behaviour. Claude Code gives a task no expected return time and no flag saying whether it can wake the chat; the plugin treats the four known kinds as waking and refuses the rest.
+- A shell or Monitor killed from the UI while the chat is idle may send no notification; its item is warmed until `maxWaitMinutes` or the budget ends.
+- Whether Claude Code's idle compaction counts a replay as activity at 1h is untested.
+- Replay spend is invisible to tools that read assistant rows only.
+- The live lanes are exercised on Linux only; macOS and Windows are untested.
+
+## Development
+
+```sh
+npm ci
+export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
+npm test               # vitest, then claude plugin test
+npm run typecheck
+npm run validate:plugin
+npm run check:structure
+npm run release:check
+npm run live -- --lane wait-return   # also ttl-1h, collision, stale; or --all
+```
+
+The unit gates (decisions, and the function-hook tests on a stand-in and on the testing kit) are unit fidelity; there is no hermetic end-to-end tier. The live lanes boot a real Claude Code on the invoking user's own configuration with the plugin loaded through `CLAUDE_CODE_PLUGIN_DIRS`, never copy credentials, and judge transcript usage and log rows, never a model's statement. A release needs three clean serial `--all` sequences on the final tree; this tree has not been so gated. `CLAUDE.md` is the testing manual.
+
+## Credits
+
+- [claude-cache-warm](https://github.com/FiredMosquito831/claude-cache-warm) (MIT): skip a warm once the cache has expired, a minimum context, supersede by newer activity.
+- [cache-keepwarm by mupamuc](https://github.com/mupamuc/cache-keepwarm) (MIT): the row above the prompt with a toggle, the immediate `/keepwarm [on|off|status]` command, anchoring on a response that used the cache, the 15-second expiry safety, same-session restore.
+
+This plugin differs from both by warming through an invisible replay, only while tracked work is pending, under one budget. Their licences are in `THIRD-PARTY-NOTICES`; this plugin is MIT licensed.

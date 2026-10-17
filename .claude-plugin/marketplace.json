@@ -1,0 +1,18 @@
+{
+  "name": "cache-keepwarm",
+  "owner": { "name": "rezzminator", "url": "https://github.com/rezzminator" },
+  "plugins": [{
+    "name": "cache-keepwarm",
+    "version": "0.1.0",
+    "source": {
+      "source": "git-subdir",
+      "url": "https://github.com/rezzminator/cache-keepwarm.git",
+      "path": "plugins/cache-keepwarm",
+      "ref": "main"
+    },
+    "description": "Protect cached context — During main-chat waits on background agents, shells, Monitors or workflows, admit invisible replays against one rewrite-saving budget.",
+    "homepage": "https://github.com/rezzminator/cache-keepwarm",
+    "license": "MIT",
+    "keywords": ["claude-code", "prompt-cache", "keep-warm", "function-hooks", "professor"]
+  }]
+}
