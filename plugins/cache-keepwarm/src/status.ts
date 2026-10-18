@@ -12,7 +12,7 @@ function duration(ms: number): string { const minutes = Math.max(0, Math.floor(m
 function label(item: Pick<WaitItem, 'kind' | 'label'> | undefined): string { return item ? `${item.kind} "${item.label}"` : 'work'; }
 function code(text: string, reason?: string): string { return text + (reason ? ` [${reason}]` : ''); }
 const reasons: Record<ReasonCode, string> = {
-  eligible: 'warming', off: 'off', busy: 'not warming: turn running', typing: 'not warming: user typing', stale: 'stopped: stale wait', 'in-flight': 'warm in flight',
+  'agent-not-waiting': 'stopped: sub-agent is not waiting', eligible: 'warming', off: 'off', busy: 'not warming: turn running', typing: 'not warming: user typing', stale: 'stopped: stale wait', 'in-flight': 'warm in flight',
   'inventory-unknown': 'stopped: this Claude Code gives the Stop hook no background_tasks', 'nothing-pending': 'not warming: nothing tracked pending', ended: 'stopped: work ended',
   'usage-unknown': 'not warming: no main request seen since the plugin loaded', 'usage-invalid': 'not warming: invalid cache usage or clock', small: 'not warming: context too small',
   '1h-unproven': 'not warming: 1h refresh unproven', 'cache-cold': 'not warming: cache cold', 'expiry-safety': 'not warming: too close to expiry',
@@ -45,7 +45,7 @@ export function formatStopped(input: StopStatus | undefined): string | undefined
 }
 const eq = (n: number): string => `${Math.round(n / 100) / 10}k-eq`;
 export function formatLedger(ledger: BudgetLedger | null, session: SessionLedger): string {
-  return `${ledger ? `${ledger.warms} warms · spent ≈ ${eq(ledger.spent)} / ${eq(ledger.allowance)} · protecting ≈ ${eq(ledger.protecting)} rewrite` : 'no current wait'} · session ${session.warms} warms, spent ≈ ${eq(session.spent)}, estimated net ≈ ${eq(session.estimatedNet)}${session.unknown ? ` (${session.unknown} unknown)` : ''}`;
+  return `${ledger ? `${ledger.warms} warms · spent ≈ ${eq(ledger.spent)} / ${eq(ledger.allowance)} · protecting ≈ ${eq(ledger.protecting)} rewrite · ` : ''}session ${session.warms} warms, spent ≈ ${eq(session.spent)}, estimated net ≈ ${eq(session.estimatedNet)}${session.unknown ? ` (${session.unknown} unknown)` : ''}`;
 }
 export function formatState(view: StatusView): string {
   return `${prefix}${view.enabled ? 'on' : 'off'} (${view.source === 'launch' ? 'launch default' : 'session override'}) · ${reasons[view.reason]} [${view.reason}] · ${view.items.length ? `${label(view.items[0])}${view.items.length > 1 ? ` +${view.items.length - 1} more` : ''} · ${duration(view.now - Math.min(...view.items.map(i => i.firstSeenAt)))} · ETA unknown` : 'no current wait'} · ${view.context ?? 'unknown'} tokens · ${formatLedger(view.ledger, view.session)}${view.lastOutcome ? ` · last: ${formatOutcome(view.lastOutcome)}` : ''}${view.warnings?.length ? ' · ' + view.warnings.join(' · ') : ''}`;
@@ -56,3 +56,5 @@ export function formatBand(view: StatusView): { text: string; state: 'warm' | 'c
 export function formatOutcome(outcome: ClosedLedger): string {
   return `kept warm across ${duration(outcome.elapsedMs)} · return read ${outcome.readPercent === null ? 'unknown' : outcome.readPercent.toFixed(1) + '%'} from cache · estimated net saved ≈ ${outcome.netSaved === null ? 'unknown' : eq(outcome.netSaved)}`;
 }
+
+export function subagentMessage(label: string | undefined, elapsedMs: number): string { return `Cache keep-warm: your prompt cache was about to expire and was kept alive because you are still waiting on ${label || 'your background work'} (${duration(elapsedMs)}). Nothing has changed. Reply exactly K and end your turn; do not call tools.`; }

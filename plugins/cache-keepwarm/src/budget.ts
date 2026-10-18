@@ -7,7 +7,7 @@ export interface SessionLedger { spent: number; warms: number; episodes: number;
 const rounded = (n: number): number => Math.round(n * 1e6) / 1e6;
 export function rewriteSaved({ context, ttl }: { context: number; ttl: Ttl }): number { return rounded(context * (ttl === '5m' ? 1.15 : 1.9)); }
 export function warmSpend(usage: Usage): number { return rounded(usage.cache_read_input_tokens * 0.1 + usage.cache_creation_input_tokens * 2 + usage.input_tokens + usage.output_tokens * 5); }
-export function warmForecast({ context, tail }: { context: number; tail: number }): number { return rounded(context * 0.1 + tail * 2 + 64 + 256 * 5); }
+export function warmForecast({ context, tail, output = 256 }: { context: number; tail: number; output?: number }): number { return rounded(context * 0.1 + tail * 2 + 64 + Math.max(256, output) * 5); }
 export function allow({ spent, forecast, saved }: { spent: number; forecast: number; saved: number }): boolean { return [spent, forecast, saved].every(n => Number.isFinite(n) && n >= 0) && spent + forecast <= saved; }
 export function budgetLedger({ context, ttl, spent, warms }: { context: number; ttl: Ttl; spent: number; warms: number }): BudgetLedger {
   const allowance = rewriteSaved({ context, ttl });

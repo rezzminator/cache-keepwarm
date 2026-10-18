@@ -222,12 +222,108 @@ def check_1h(lane, warm1h):
         raise ValueError('FAIL unexpected compaction')
     return {'verdict': 'PASS ttl-1h refresh', 'ratio': ratio, 'gapMs': gap}
 
+def cache_ratio(record):
+    message = record.get('message', {})
+    if message.get('model') != 'claude-haiku-5-5':
+        raise ValueError('FAIL wrong sub-agent model')
+    usage = message.get('usage', {})
+    counts = [usage.get(k) for k in ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens')]
+    if any(not isinstance(n, (int, float)) or not 0 <= n < float('inf') for n in counts) or sum(counts) <= 0:
+        raise ValueError('NOT RUN: sub-agent usage missing or invalid')
+    return usage['cache_read_input_tokens'] / sum(counts)
+
+def parent_requests(lane, warms):
+    # Count actual parent API usages, not model statements or synthetic answers.
+    rows, agent = lane['transcript'], lane['agentId']
+    def notice(row, result):
+        text = reply_text(row)
+        return row.get('type') == 'user' and '<task-id>' + agent + '</task-id>' in text and '<result>' + result + '</result>' in text and row.get('origin', {}).get('kind') == 'task-notification'
+    def requests_after(index):
+        end = next((j for j in range(index + 1, len(rows)) if rows[j].get('type') == 'user'), len(rows))
+        return len({r.get('requestId') or r.get('message', {}).get('id') for r in rows[index + 1:end] if r.get('type') == 'assistant' and any(type(v) in (int, float) and v > 0 for v in r.get('message', {}).get('usage', {}).values())})
+    notes = [i for i, row in enumerate(rows) if notice(row, 'K')]
+    if len(notes) != warms:
+        raise ValueError('NOT RUN: parent warm notification evidence incomplete')
+    returned = [i for i, row in enumerate(rows) if notice(row, 'SUBAGENT_RETURNED')]
+    if len(returned) != 1 or not requests_after(returned[0]):
+        raise ValueError('FAIL real child notification did not produce a normal parent request')
+    counts = [requests_after(i) for i in notes]
+    return {'parentWarmRequests': counts, 'parentReturnRequests': requests_after(returned[0]), 'zeroCollateral': all(n == 0 for n in counts)}
+
+def check_subagents(evidence):
+    lanes = evidence.get('lanes', [])
+    if len(lanes) != 2:
+        raise ValueError('NOT RUN: sub-agent warm/control pair incomplete')
+    results = []
+    for warm, lane in zip((True, False), lanes):
+        validity(lane)
+        prefix_kept(lane)
+        records = lane.get('subagent', [])
+        validity({**lane, 'transcript': records})
+        if not any(r.get('event') == 'LOADED' for r in lane.get('log', [])) or not records or not lane.get('agentId') or not isinstance(lane.get('effort'), list):
+            raise ValueError('NOT RUN: sub-agent load/ownership/effort evidence missing')
+        if any('Cache keep-warm:' in reply_text(r) for r in lane['transcript']):
+            raise ValueError('FAIL warm text appeared in main transcript')
+        calls = [b for r in records for b in r.get('message', {}).get('content', []) if isinstance(b, dict) and b.get('type') == 'tool_use' and b.get('name') == 'Bash' and b.get('input', {}).get('run_in_background') is True]
+        owned = [r.get('toolUseResult', {}).get('backgroundTaskId') for r in records if isinstance(r.get('toolUseResult'), dict) and any(b.get('tool_use_id') == c.get('id') for b in r.get('message', {}).get('content', []) if isinstance(b, dict) for c in calls)]
+        owned = [i for i in owned if isinstance(i, str)]
+        waiting = [r for r in records if r.get('type') == 'assistant' and 'SUBAGENT_WAITING' in reply_text(r)]
+        returns = [r for r in records if r.get('type') == 'assistant' and 'SUBAGENT_RETURNED' in reply_text(r)]
+        notifications = [i for i, r in enumerate(records) if r.get('type') == 'user' and '<task-notification' in reply_text(r) and any('<task-id>' + task + '</task-id>' in reply_text(r) for task in owned)]
+        if not owned or len(waiting) != 1 or len(returns) != 1 or len(notifications) != 1:
+            raise ValueError('NOT RUN: unique owned background task/wait/notification/return absent')
+        if timestamp(returns[0]) - timestamp(waiting[0]) <= 300000 or records.index(returns[0]) <= notifications[0]:
+            raise ValueError('NOT RUN: sub-agent wait did not outlast 5m or return preceded notification')
+        warm_users = [i for i, r in enumerate(records) if r.get('type') == 'user' and 'Cache keep-warm:' in reply_text(r)]
+        admits = [r for r in lane['log'] if r.get('kind') == 'subagent' and r.get('agentId') == lane['agentId'] and r.get('event') == 'admit' and r.get('reason') == 'eligible']
+        warm_rows = [r for r in lane['log'] if r.get('kind') == 'subagent' and r.get('agentId') == lane['agentId'] and r.get('event') == 'warm']
+        if warm and (not warm_users or len(admits) != len(warm_users) or len(warm_rows) != len(warm_users)):
+            raise ValueError('FAIL sub-agent native send/usage evidence absent')
+        if not warm and (warm_users or admits or warm_rows):
+            raise ValueError('FAIL subagents off still warmed')
+        warm_ratios, spent = [], 0
+        keys = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+        for count, (i, admit, row) in enumerate(zip(warm_users, admits, warm_rows), 1):
+            if not timestamp(waiting[0]) < timestamp(admit) < timestamp(returns[0]) or abs(timestamp(records[i]) - timestamp(admit)) > 10000:
+                raise ValueError('FAIL sub-agent send outside waiting interval')
+            end = next((j for j in range(i + 1, len(records)) if records[j].get('type') == 'user'), len(records))
+            replies = [r for r in records[i + 1:end] if r.get('type') == 'assistant']
+            if not replies or any(b.get('type') == 'tool_use' for r in replies for b in r.get('message', {}).get('content', []) if isinstance(b, dict)):
+                raise ValueError('FAIL warm turn absent or called a tool')
+            seen, total = set(), dict.fromkeys(keys, 0)
+            for reply in replies:
+                key = reply.get('requestId') or reply.get('message', {}).get('id')
+                if key not in seen:
+                    seen.add(key)
+                    usage = reply.get('message', {}).get('usage', {})
+                    if any(type(usage.get(k)) not in (int, float) or not 0 <= usage[k] < float('inf') for k in keys):
+                        raise ValueError('NOT RUN: warm transcript output/usage missing or invalid')
+                    for k in keys:
+                        total[k] += usage[k]
+                    ratio = cache_ratio(reply)
+                    if ratio < .9:
+                        raise ValueError('FAIL sub-agent warm cache read: ' + str(ratio))
+                    warm_ratios.append(ratio)
+            if any(type(row.get('usage', {}).get(k)) not in (int, float) or row['usage'][k] != total[k] for k in keys):
+                raise ValueError('FAIL native warm usage differs from transcript')
+            spent += total['input_tokens'] + total['output_tokens'] * 5 + total['cache_read_input_tokens'] * .1 + total['cache_creation_input_tokens'] * 2
+            ledger = row.get('ledger', {})
+            if any(type(v) not in (int, float) or abs(v - spent) > 1e-5 for v in (row.get('spent'), ledger.get('spent'))) or row.get('warms') != count or ledger.get('warms') != count:
+                raise ValueError('FAIL native warm charge/ledger differs from transcript')
+        ratio = cache_ratio(returns[0])
+        if warm and ratio < .9 or not warm and ratio >= .2:
+            raise ValueError('FAIL sub-agent return cache separation: ' + str(ratio))
+        results.append({'path': lane.get('subagentPath'), 'agentId': lane['agentId'], 'warms': len(warm_users), 'warmRatios': warm_ratios, 'returnRatio': ratio, **parent_requests(lane, len(warm_users))})
+    return {'verdict': 'PASS subagent-wait cache separation', 'lanes': results}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('evidence', type=Path)
     args = parser.parse_args()
     try:
-        result = check(json.loads(read_text(args.evidence)))
+        evidence = json.loads(read_text(args.evidence))
+        result = check_subagents(evidence) if evidence.get('mode') == 'subagent-wait' else check(evidence)
     except (ValueError, OSError) as error:
         print(str(error))
         return 2

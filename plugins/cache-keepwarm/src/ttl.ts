@@ -2,7 +2,11 @@ export type Ttl = '5m' | '1h';
 export type TtlSource = 'force-5m' | 'env' | 'observed' | 'env-1h' | 'assumed';
 export type TtlEnv = Partial<Record<'FORCE_PROMPT_CACHING_5M' | 'CLAUDE_CODE_PROMPT_CACHE_TTL' | 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL' | 'ENABLE_PROMPT_CACHING_1H', string>>;
 export interface TtlResolution { ttl: Ttl; source: TtlSource }
-export function resolveTtl(env: TtlEnv, observed: Ttl | null): TtlResolution {
+export function resolveTtl(env: TtlEnv, observed: Ttl | null, kind?: 'subagent'): TtlResolution {
+  if (kind === 'subagent') {
+    const explicit = warmWriteTtl(env);
+    return explicit.source === 'assumed' && observed ? { ttl: observed, source: 'observed' } : explicit;
+  }
   if (env.FORCE_PROMPT_CACHING_5M === '1') return { ttl: '5m', source: 'force-5m' };
   if (env.CLAUDE_CODE_PROMPT_CACHE_TTL === '5m' || env.CLAUDE_CODE_PROMPT_CACHE_TTL === '1h') return { ttl: env.CLAUDE_CODE_PROMPT_CACHE_TTL, source: 'env' };
   if (observed) return { ttl: observed, source: 'observed' };

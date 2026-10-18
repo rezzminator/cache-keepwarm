@@ -19,8 +19,6 @@ test.each([
     expect(result.status).toBe(2); expect(result.stdout).toContain(text);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
-
-// Claude Code's own main-thread request records: each re-sends `keep` of its base's messages and appends `tail`.
 const requests = () => [{ type: 'api-request', querySource: 'repl_main_thread', id: 'r1', keep: 0, tail: ['a', 'b'] },
   { type: 'api-request', querySource: 'repl_main_thread', id: 'r2', base: 'r1', keep: 2, tail: ['c', 'd'] },
   { type: 'api-request', querySource: 'repl_main_thread', id: 'r3', base: 'r2', keep: 4, tail: ['e'] }];
@@ -108,7 +106,6 @@ test('all runs the three 5m sequences and leaves ttl-1h to its own lane', () => 
  assert seen==['warm','control','input','delivery','lease','killed'] and result==0,(seen,result)`);
   expect(result.status, result.stderr).toBe(0);
 });
-
 test('late API failure becomes VOID during polling rather than a return timeout', () => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
  root=pathlib.Path(d);cwd=root/'work';project=root/'.claude/projects'/m.re.sub(r'[^a-zA-Z0-9]','-',str(cwd));project.mkdir(parents=True)
@@ -130,7 +127,6 @@ test('late API failure becomes VOID during polling rather than a return timeout'
  sys.exit(1)`);
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
-
 function oneHour(warm: boolean) {
   const at = 1000000, gap = warm ? 4001000 : 421000;
   const usage = (read: number) => ({ input_tokens: 1000, output_tokens: 3, cache_read_input_tokens: read, cache_creation_input_tokens: 49000 - read });
@@ -197,14 +193,21 @@ assert len(text.encode()) < m.ARG_LIMIT < 131072, len(text.encode())
 assert 'STEPS' not in text and 'run_in_background true' not in text, text[:600]`);
   expect(result.status, result.stderr).toBe(0);
 });
-test('lane logs follow the real file names: plugin {session}.{instance}, auto-effort effort.{session}', () => {
+test.each(['effort', 'effort-control'])('lane log routing isolates main/subagent %s producer files and passes its env', prefix => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
- root=pathlib.Path(d)
- (root/'s1.i1.jsonl').write_text('{"event":"LOADED"}\\n');(root/'effort.s1.jsonl').write_text('{"event":"step"}\\n');(root/'effort.s1.2.jsonl').write_text('{"event":"step","n":2}\\n')
+ root=pathlib.Path(d); prefix='${prefix}'
+ (root/'s1.i1.jsonl').write_text('{"event":"LOADED"}\\n');(root/f'{prefix}.s1.jsonl').write_text('{"event":"step"}\\n');(root/f'{prefix}.s1.2.jsonl').write_text('{"event":"step","n":2}\\n');(root/f'{prefix}.s1.subagent.jsonl').write_text('{"event":"step","agent":"a"}\\n')
  assert [p.name for p in m.plugin_logs(root)]==['s1.i1.jsonl'],m.plugin_logs(root)
- assert m.effort_rows(root)==[{'event':'step'},{'event':'step','n':2}],m.effort_rows(root)
+ assert m.effort_rows(root)==[{'event':'step'},{'event':'step','n':2}],m.effort_rows(root); assert m.effort_rows(root,subagent=True)==[{'event':'step','agent':'a'}]
  assert m.debug_text(root)==('',False)
- for p in root.glob('effort.*'): p.unlink()
+ seen={};m.cleanup=lambda *a:{'nativeSocketClosed':True,'ownedProcessesRemaining':[],'errors':[]}
+ def launch(argv,**kw): seen.update(kw['env']);return types.SimpleNamespace(stdout='',stderr='stopped fixture',returncode=1)
+ m.run=launch
+ try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','warm')
+ except RuntimeError as e: assert 'stopped fixture' in str(e)
+ assert seen.get('AUTO_EFFORT_LOG_FILE')==str(root/'out/warm/effort.jsonl'),seen.get('AUTO_EFFORT_LOG_FILE')
+ assert seen.get('AUTO_EFFORT_CONTROL_LOG_FILE')==str(root/'out/warm/effort-control.jsonl'),seen.get('AUTO_EFFORT_CONTROL_LOG_FILE')
+ for p in root.glob('effort*.jsonl'): p.unlink()
  try: m.effort_rows(root)
  except RuntimeError as e: assert 'need auto-effort log' in str(e);sys.exit(0)
  sys.exit(1)`);
@@ -274,4 +277,24 @@ m.run=run; m.marked_pids=lambda marker: []
 r=m.cleanup('kw-x','marker',None)
 print(json.dumps({'signal':m.STOP['signal'],'closed':r['nativeSocketClosed'],'errors':r['errors']}))`);
   expect(result.stdout.trim(), result.stderr).toBe('{"signal": 15, "closed": true, "errors": []}');
+});
+test.each(['good', 'cold-warm', 'tool', 'main-text', 'no-admit', 'warm-control', 'no-usage', 'wrong-output', 'wrong-spend', 'wrong-ledger', 'missing-parent-return', 'missing-parent-notice'])('sub-agent evidence %s is independently judged', problem => {
+  const message = (text: string, at: number, read = 49000, type = 'assistant') => ({ type, at, ...(type === 'user' && text.includes('<task-notification>') ? { origin: { kind: 'task-notification' } } : {}), message: { id: String(at), model: 'claude-haiku-5-5', content: [{ type: 'text', text }], usage: { input_tokens: 1000, cache_read_input_tokens: read, cache_creation_input_tokens: 49000 - read, output_tokens: 3 } } });
+  const lane = (warm: boolean): any => ({ debug: '', effort: [], transcript: [...requests(), ...(warm ? [message('<task-notification><task-id>a</task-id><result>K</result></task-notification>', 241050, 0, 'user'), message('STILL_WAITING', 241100)] : []), message('<task-notification><task-id>a</task-id><result>SUBAGENT_RETURNED</result></task-notification>', 542000, 0, 'user'), message('RETURNED', 543000)], agentId: 'a', subagentPath: 'agent-a.jsonl', log: [{ event: 'LOADED' }, ...(warm ? [{ kind: 'subagent', agentId: 'a', event: 'admit', reason: 'eligible', at: 240000 }, { kind: 'subagent', agentId: 'a', event: 'warm', at: 241000, usage: { input_tokens: 1000, cache_read_input_tokens: 49000, cache_creation_input_tokens: 0, output_tokens: 3 }, spent: 5915, warms: 1, ledger: { spent: 5915, warms: 1 } }] : [])], subagent: [
+    { type: 'assistant', at: 0, message: { content: [{ type: 'tool_use', id: 'shell', name: 'Bash', input: { command: 'sleep 540', run_in_background: true } }] } },
+    { type: 'user', at: 0, toolUseResult: { backgroundTaskId: 'work' }, message: { content: [{ type: 'tool_result', tool_use_id: 'shell' }] } }, message('SUBAGENT_WAITING', 1000),
+    ...(warm ? [message('Cache keep-warm: your prompt cache was about to expire', 240000, 49000, 'user'), message('K', 241000)] : []),
+    message('<task-notification><task-id>work</task-id></task-notification>', 540000, 0, 'user'), message('SUBAGENT_RETURNED', 541000, warm ? 49000 : 0)] });
+  const input: any = { mode: 'subagent-wait', lanes: [lane(true), lane(false)] }, warm = input.lanes[0];
+  if (problem === 'no-usage') delete warm.log[2].usage;
+  if (problem === 'wrong-output') warm.log[2].usage.output_tokens = 0;
+  if (problem === 'wrong-spend') warm.log[2].spent = 1;
+  if (problem === 'wrong-ledger') warm.log[2].ledger.spent = 1;
+  if (problem === 'cold-warm') warm.subagent[4].message.usage.cache_read_input_tokens = 0;
+  if (problem === 'tool') warm.subagent[4].message.content.push({ type: 'tool_use', name: 'Bash' });
+  if (problem === 'main-text') warm.transcript.push(message('Cache keep-warm:', 240000, 49000, 'user'));
+  if (problem === 'no-admit') warm.log = warm.log.filter((r: any) => r.event !== 'admit');
+  if (problem === 'missing-parent-return') warm.transcript.pop(); if (problem === 'missing-parent-notice') warm.transcript.splice(3, 1);
+  if (problem === 'warm-control') input.lanes[1].subagent.at(-1).message.usage.cache_read_input_tokens = 49000;
+  const result = checkPair(input); expect(result.status, result.stdout).toBe(problem === 'good' ? 0 : 2); if (problem === 'good') { expect(JSON.parse(result.stdout).lanes[0]).toMatchObject({ parentWarmRequests: [1], parentReturnRequests: 1, zeroCollateral: false }); }
 });

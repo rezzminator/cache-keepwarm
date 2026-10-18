@@ -36,3 +36,10 @@ test.each([
   let actual: unknown; try { actual = observeTtl({ gapMs, read, prevContext }); } catch (error) { actual = String(error); }
   expect(actual).toBe(expected);
 });
+
+test.each([
+  [{ CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }, null, '5m'],
+  [{ CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '5m', ENABLE_PROMPT_CACHING_1H: '1' }, '1h', '5m'],
+  [{ ENABLE_PROMPT_CACHING_1H: '1' }, '5m', '1h'], [{}, '1h', '1h'],
+  [{ FORCE_PROMPT_CACHING_5M: '1', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '1h' }, '1h', '5m'],
+] as const)('sub-agent TTL %#', (env, observed, ttl) => expect((resolveTtl as Function)(env, observed, 'subagent').ttl).toBe(ttl));

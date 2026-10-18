@@ -4,6 +4,27 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-18
+
+### Added
+
+- Opt-in (off by default) independent waiting sub-agent episodes, timers and rewrite-saving budgets. Short real warm turns address only native `waiting` agents with attributable pending background work; foreground tools remain unreachable. Main-chat invisible replay behaviour is unchanged.
+- `subagents` (default false; enable with `subagents: true` or `CACHE_KEEPWARM_SUBAGENTS=1`) and `CACHE_KEEPWARM_SUBAGENTS`, independent sub-agent TTL resolution, actual warm-turn usage accounting including thinking/output, and an observed-output forecast.
+- Sub-agent count, labels, warms and spend in `/keepwarm` and the band; metadata-only `agentId` and `kind: subagent` log rows. `/keepwarm off` cancels every episode.
+- A transcript/usage/log-judged `subagent-wait` warm/control live lane (`--lane subagent-wait`). One run on Claude Code 2.1.302 measured warm-turn cache reads of 99.6469% and 99.6778%, a nine-minute return at 98.9920% and a subagents-off control at 0%; a measurement, not a guarantee.
+- Warm accounting verifies `turn.complete` and an exact own receipt in `session.messages` before charging or re-anchoring, because Claude Code 2.1.302 skips this plugin's start and step for its native send. The forecast of the next warm's output is `max(256, previous warm actual output)`.
+
+### Known limits
+
+- Sub-agent warming is opt-in because a warm can wake any spawning parent (main or nested) with a `K` notice and cause a separately charged parent turn outside the per-agent ledger, which can exceed the savings. No suppressor ships and every native delivery is preserved.
+- Each sub-agent warm makes the native engine emit an interim `K` task-notification to the spawning parent (main chat or nested agent), which can start a parent turn and add cost outside the per-agent ledger. Suppression through `session.receive` was disproved live and removed; ordinary task notices are preserved. The warm instruction itself appears only in the agent's transcript.
+- Sub-agent TTL priority: `FORCE_PROMPT_CACHING_5M=1`, `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`, `ENABLE_PROMPT_CACHING_1H=1`, the observed 90%-read rule, then assumed 5m; the main TTL is separate.
+
+### Fixed
+
+- Empty-wait status prints `no current wait` once, not twice.
+- README public repository status and install guidance.
+
 ## [0.1.0] — 2026-10-17
 
 Initial release candidate; not published. Live-gated on Claude Code 2.1.302: three clean `--all` sequences and one clean `ttl-1h` lane.

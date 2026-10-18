@@ -35,3 +35,9 @@ test.each([
   let actual: unknown; try { actual = leafRefusal(stat); } catch (error) { actual = String(error); }
   expect(actual).toBe(expected);
 });
+
+test('sub-agent metadata retains identity but never its prompt or label', () => {
+  const row = { kind: 'subagent', agentId: 'child', at: 1, event: 'warm', epoch: 2, items: [{ id: 'work', kind: 'command', label: 'secret-label' }], ttl: '5m', ttlSource: 'assumed', context: 50000, spent: 1, text: 'secret-message' } as unknown as LogRow;
+  const actual = appendLog([], row); expect(actual[0]).toMatchObject({ kind: 'subagent', agentId: 'child' });
+  expect(JSON.stringify(actual)).not.toMatch(/secret-label|secret-message/);
+});

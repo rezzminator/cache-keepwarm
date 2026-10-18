@@ -1,12 +1,13 @@
 import type { Ttl } from './ttl.ts';
-export type ReasonCode = 'eligible' | 'off' | 'busy' | 'typing' | 'stale' | 'in-flight' | 'inventory-unknown' | 'nothing-pending' | 'ended' | 'usage-unknown' | 'usage-invalid' | 'small' | '1h-unproven' | 'cache-cold' | 'expiry-safety' | 'wake-unknown' | 'cannot-wake' | 'lease' | 'imminent' | 'wait-window-short' | 'budget' | 'marginal' | 'fork-failed' | 'timer-failed' | 'resumed' | 'idle';
+export type ReasonCode = 'agent-not-waiting' | 'eligible' | 'off' | 'busy' | 'typing' | 'stale' | 'in-flight' | 'inventory-unknown' | 'nothing-pending' | 'ended' | 'usage-unknown' | 'usage-invalid' | 'small' | '1h-unproven' | 'cache-cold' | 'expiry-safety' | 'wake-unknown' | 'cannot-wake' | 'lease' | 'imminent' | 'wait-window-short' | 'budget' | 'marginal' | 'fork-failed' | 'timer-failed' | 'resumed' | 'idle';
 export interface DecisionItem { id: string; expired: boolean; leaseEndsAt: number; expectedBackAt: number | null; wake: 'yes' | 'no' | 'unknown' }
-export interface DecisionInput { fault?: 'fork-failed' | 'timer-failed'; enabled: boolean; busy: boolean; typing: boolean; currentEpoch: boolean; inFlight: boolean; known: boolean; context: number | null; minContext: number; lastSendAt: number | null; now: number; ttl: Ttl; warm1h: boolean; items: readonly DecisionItem[]; endedId?: string; spent: number; forecast: number; saved: number }
+export interface DecisionInput { agentStatus?: string; fault?: 'fork-failed' | 'timer-failed'; enabled: boolean; busy: boolean; typing: boolean; currentEpoch: boolean; inFlight: boolean; known: boolean; context: number | null; minContext: number; lastSendAt: number | null; now: number; ttl: Ttl; warm1h: boolean; items: readonly DecisionItem[]; endedId?: string; spent: number; forecast: number; saved: number }
 export interface Decision { action: 'warm' | 'skip' | 'stop'; reason: ReasonCode; items: string[]; itemId?: string }
 export function decideWarm(input: DecisionInput): Decision {
   const stop = (reason: ReasonCode, action: Decision['action'] = 'stop', itemId?: string): Decision => ({ action, reason, items: [], ...(itemId ? { itemId } : {}) });
   if (!input.currentEpoch) return stop('stale');
   if (!input.enabled) return stop('off');
+  if (input.agentStatus !== undefined && input.agentStatus !== 'waiting') return stop('agent-not-waiting');
   if (input.busy) return stop('busy');
   if (input.typing) return stop('typing');
   if (input.fault) return stop(input.fault);

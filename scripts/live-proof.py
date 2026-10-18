@@ -44,6 +44,18 @@ ARG_LIMIT = 120000
 # reaches an auto-compact window (a compacted lane proves nothing about the cache).
 FIXTURE_LINES = 200
 
+def launch_subagent_text(seconds):
+    return (f"Live cache experiment, no repository work. Start ONE general-purpose background agent with model haiku. "
+            f"Its task: start ONE Bash call in the BACKGROUND (run_in_background true): "
+            f"`python3 -c 'import time; time.sleep({seconds}); print(\"SUBAGENT_SLEEP_DONE\")'`. "
+            "After the Bash is backgrounded, reply exactly SUBAGENT_WAITING and END YOUR TURN while it runs. "
+            "Do not poll, use Monitor, or wait in a foreground tool. When its task-notification arrives, reply "
+            "SUBAGENT_RETURNED and finish. Follow any cache keep-warm instruction with exactly K and no tool call. "
+            "Main: reply WAITING after spawning. An interim SUBAGENT_WAITING is NOT completion: reply STILL_WAITING, "
+            "never poll or spawn again. Reply RETURNED only when the agent reports SUBAGENT_RETURNED. "
+            "No edits, Git, or other chats. No effort changes or effort tools.\n" +
+            "\n".join(f'Fixture {i}: ceramic lantern cobalt meadow quiet orbit.' for i in range(FIXTURE_LINES)))
+
 def run(args, **kwargs):
     return subprocess.run(args, text=True, capture_output=True, timeout=kwargs.pop('timeout', 30), **kwargs)
 
@@ -62,12 +74,12 @@ def owned_socket(text):
     return None
 
 def plugin_logs(directory):
-    return [p for p in directory.glob('*.jsonl') if not p.name.startswith('effort.')]
+    return [p for p in directory.glob('*.jsonl') if not p.name.startswith(('effort.', 'effort-control.'))]
 
-def effort_rows(directory):
-    # auto-effort derives effort.{session}[.{segment}].jsonl from AUTO_EFFORT_LOG_FILE.
-    files = sorted(directory.glob('effort.*.jsonl'), key=lambda p: (len(p.name), p.name))
-    if not files:
+def effort_rows(directory, subagent=False):
+    # Both producers insert session/segment before .jsonl; the new controller also writes .subagent.jsonl.
+    files = sorted((p for p in directory.glob('*.jsonl') if p.name.startswith(('effort.', 'effort-control.')) and p.name.endswith('.subagent.jsonl') == subagent), key=lambda p: (len(p.name), p.name))
+    if not files and not subagent:
         raise RuntimeError('ERROR need auto-effort log')
     return [row for path in files for row in rows(path)]
 
@@ -155,7 +167,7 @@ def kill_chat(name, marker, socket):
     return {'nativeSocketClosed': dead, 'ownedProcessesRemaining': left, 'killOutput': kill_output, 'errors': errors}
 
 
-def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m'):
+def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m', subagent=False, subagents=True):
     directory = output / mode
     directory.mkdir(parents=True, mode=0o700)
     marker = secrets.token_hex(10)
@@ -165,12 +177,12 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m')
     project = (config / 'projects').resolve() / re.sub(r'[^a-zA-Z0-9]', '-', str(args.cwd))
     before = set(project.glob('*.jsonl'))
     prompt = directory / 'prompt.txt'
-    text = launch_text(seconds)
+    text = launch_subagent_text(seconds) if subagent else launch_text(seconds)
     if len(text.encode()) >= ARG_LIMIT:
         raise RuntimeError(f'ERROR launch prompt {len(text.encode())} bytes reaches the {ARG_LIMIT}-byte single-argument limit')
     prompt.write_text(text)
     env = dict(os.environ)
-    env.update(CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)]), CACHE_KEEPWARM_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
+    env.update(CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)]), CACHE_KEEPWARM_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
     if mode == 'lease':
         env['CACHE_KEEPWARM_MAX_WAIT_MINUTES'] = '6'
     evidence = {'mode': mode, 'log': [], 'transcript': []}
@@ -235,9 +247,19 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m')
             raise RuntimeError('ERROR need exactly one plugin decision log')
         evidence['log'] = rows(logs[0])
         evidence['effort'] = effort_rows(directory)
+        evidence['subagentEffort'] = effort_rows(directory, subagent=True)
         evidence['debug'], evidence['debugWritten'] = debug_text(directory)
         (directory / 'transcript.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in evidence['transcript']))
         evidence['transcriptPath'] = str(directory / 'transcript.jsonl')
+        if subagent:
+            agents = sorted((transcript.parent / transcript.stem / 'subagents').glob('agent-*.jsonl'))
+            if len(agents) != 1:
+                raise RuntimeError('NOT RUN: expected exactly one owned sub-agent transcript, got ' + str(len(agents)))
+            evidence['agentId'] = agents[0].stem.removeprefix('agent-')
+            evidence['subagent'] = rows(agents[0])
+            path = directory / 'subagent.jsonl'
+            path.write_text(''.join(json.dumps(r) + '\n' for r in evidence['subagent']))
+            evidence['subagentPath'] = str(path)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         failure = str(error)
         evidence['failure'] = failure
@@ -299,7 +321,7 @@ def warm_1h():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--lane', choices=['wait-return', 'ttl-1h', 'collision', 'stale'])
+    parser.add_argument('--lane', choices=['subagent-wait', 'wait-return', 'ttl-1h', 'collision', 'stale'])
     parser.add_argument('--all', action='store_true')
     parser.add_argument('--cwd', type=Path, default=ROOT)
     parser.add_argument('--output', type=Path)
@@ -331,7 +353,12 @@ def main():
     for mode in ['wait-return', 'collision', 'stale'] if args.all else [args.lane]:
         try:
             directory = output / mode
-            if mode == 'ttl-1h':
+            if mode == 'subagent-wait':
+                evidence = {'mode': mode, 'lanes': [lane(args, directory, 'warm', seconds=540, subagent=True), lane(args, directory, 'control', seconds=540, subagent=True, subagents=False)]}
+                path = directory / 'pair.json'
+                path.write_text(json.dumps(evidence, indent=2))
+                print(json.dumps(checker.check_subagents(evidence)), flush=True)
+            elif mode == 'ttl-1h':
                 warm1h = warm_1h()
                 evidence = lane(args, directory, 'ttl-1h', seconds=4000 if warm1h else 420, cache='1h')
                 (directory / 'ttl-1h.json').write_text(json.dumps(evidence, indent=2))

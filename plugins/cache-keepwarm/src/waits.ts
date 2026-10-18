@@ -19,13 +19,13 @@ export function fromStop(tasks: readonly TaskSummary[] | undefined, _now: number
   }
   return { known: true, items, ...(ended.length ? { ended } : {}) };
 }
-export function reconcile(items: readonly WaitItem[], agents: readonly Pick<AgentInfo, 'id' | 'status'>[]): { items: WaitItem[]; ended: EndedItem[] } {
+export function reconcile(items: readonly WaitItem[], agents: readonly Pick<AgentInfo, 'id' | 'status'>[], pendingOnly = false): { items: WaitItem[]; ended: EndedItem[] } {
   const kept: WaitItem[] = [], ended: EndedItem[] = [];
   const statuses = new Map(agents.map(agent => [agent.id, agent.status]));
   for (const item of items) {
     const status = item.kind === 'agent' ? statuses.get(item.id) : undefined;
     if (status === 'completed' || status === 'failed' || status === 'killed') ended.push({ item, ended: status });
-    else kept.push(item);
+    else if (!pendingOnly || item.kind !== 'agent' || status === 'pending' || status === 'running' || status === 'waiting') kept.push(item);
   }
   return { items: kept, ended };
 }
@@ -34,4 +34,26 @@ export function firstSeen(items: readonly WaitItem[], previous: ReadonlyMap<stri
 }
 export function leaseExpired({ firstSeenAt, maxWaitMinutes, now }: { firstSeenAt: number; maxWaitMinutes: number; now: number }): boolean {
   return now - firstSeenAt >= maxWaitMinutes * 60000;
+}
+
+export function ownedFromTool(tool: string, input: Record<string, unknown>, result: unknown): WaitItem | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as Record<string, unknown>;
+  if (r.error || r.status === 'completed' || r.backgroundEndsWithFinalResponse) return null;
+  let id: unknown, kind: string, label: unknown;
+  if (tool === 'Bash') { id = r.backgroundTaskId; kind = 'command'; label = input.command; }
+  else if (tool === 'Agent') { id = r.agentId ?? r.agent_id ?? r.taskId; kind = 'agent'; label = input.description ?? r.description; }
+  else if (tool === 'Skill' && r.background === true) { id = r.agentId; kind = 'agent'; label = r.commandName; }
+  else if (tool === 'Monitor') { id = r.taskId; kind = 'monitor'; label = 'Monitor'; }
+  else if (tool === 'Workflow') { id = r.taskId; kind = 'workflow'; label = r.workflowName ?? 'Workflow'; }
+  else return null;
+  return typeof id === 'string' && id.length > 0 ? { id, kind, label: sanitizeLabel(typeof label === 'string' ? label : 'your background work') } : null;
+}
+
+export function warmReceipt(messages: readonly { role: string; text: string; toolUses: readonly unknown[] }[], expected: string): { own: boolean; tools: boolean } {
+  const index = messages.findLastIndex(m => m.role === 'user');
+  if (index < 0) return { own: false, tools: false };
+  const text = messages[index]!.text;
+  const wrapped = `The coordinator sent a message while you were working:\n${expected}\n\nAddress this before completing your current task.`;
+  return { own: text === expected || text === wrapped, tools: messages.slice(index + 1).some(m => m.toolUses.length > 0) };
 }

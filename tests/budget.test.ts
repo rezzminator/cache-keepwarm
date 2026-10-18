@@ -33,3 +33,5 @@ test('unsettled spend never becomes a realized saving estimate', () => {
   const ledger = { context: 50000, ttl: '5m' as const, spent: 5000, warms: 1, allowance: 57500, protecting: 62500, remaining: 52500 };
   expect(closeLedger({ ledger, waitStartedAt: 0, originalExpiryAt: 300000, returnedAt: 400000, samePrefix: true, usage: { input_tokens: 100, output_tokens: 2, cache_read_input_tokens: 49000, cache_creation_input_tokens: 900 }, settled: false } as Parameters<typeof closeLedger>[0])).toMatchObject({ readPercent: 98, netSaved: null, reason: 'unknown' });
 });
+
+test('observed thinking output raises the next forecast', () => expect(warmForecast({ context: 50000, tail: 0, output: 10000 } as any)).toBe(55064));

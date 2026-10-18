@@ -30,3 +30,7 @@ test.each(['fork-failed', 'timer-failed'] as const)('pure settlement stop %s', f
 test('lease stop names the oldest expired wait independent of roster ordering', () => {
   expect(decideWarm({ ...base, items: [{ ...item, id: 'newer', expired: true, leaseEndsAt: 200000 }, { ...item, id: 'oldest', expired: true, leaseEndsAt: 100000 }] })).toMatchObject({ reason: 'lease', itemId: 'oldest' });
 });
+
+test.each(['running', 'idle', 'completed', 'failed', 'killed', 'unknown'])('sub-agent %s cannot be resumed by a warm', agentStatus => {
+  expect(decideWarm({ ...base, agentStatus } as any)).toMatchObject({ action: 'stop', reason: 'agent-not-waiting' });
+});

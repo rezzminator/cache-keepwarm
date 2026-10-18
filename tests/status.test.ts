@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { formatBand, formatLedger, formatOutcome, formatState, formatStopped, formatWaiting, type StatusView } from '../plugins/cache-keepwarm/src/status.ts';
+import { subagentMessage, formatBand, formatLedger, formatOutcome, formatState, formatStopped, formatWaiting, type StatusView } from '../plugins/cache-keepwarm/src/status.ts';
 function call<T>(fn: () => T): T | string { try { return fn(); } catch (error) { return String(error); } }
 const items = [{ kind: 'agent', label: 'Audit the release notes', firstSeenAt: 0 }, { kind: 'command', label: 'npm test', firstSeenAt: 60000 }];
 test('exact waiting examples', () => {
@@ -33,4 +33,14 @@ test('clear, command, band and ledger share truthful values', () => {
   }
   expect(call(() => formatOutcome({ elapsedMs: 600000, readPercent: 98, netSaved: 5000, reason: 'estimated' }))).toContain('return read 98.0% from cache · estimated net saved ≈ 5k-eq');
   expect(call(() => formatOutcome({ elapsedMs: 0, readPercent: null, netSaved: null, reason: 'unknown' }))).toContain('unknown');
+});
+
+test('empty status names no current wait exactly once', () => {
+  const view: StatusView = { enabled: true, source: 'launch', reason: 'typing', items: [], now: 0, warms: 0, nextInMs: 0, ttl: '5m', ttlSource: 'assumed', context: 50000, ledger: null, session: { spent: 0, warms: 0, episodes: 0, estimatedNet: 0, unknown: 0 }, lastOutcome: null };
+  expect(formatState(view).match(/no current wait/g)).toHaveLength(1);
+});
+
+test('sub-agent warm message sanitizes the exact display contract', () => {
+  expect(subagentMessage('a ' + 'b'.repeat(38) + '…', 540000)).toBe('Cache keep-warm: your prompt cache was about to expire and was kept alive because you are still waiting on a ' + 'b'.repeat(38) + '… (9m). Nothing has changed. Reply exactly K and end your turn; do not call tools.');
+  expect(subagentMessage(undefined, 0)).toContain('waiting on your background work (0m).');
 });

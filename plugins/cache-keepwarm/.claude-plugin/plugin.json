@@ -1,37 +1,56 @@
 {
   "name": "cache-keepwarm",
-  "version": "0.1.0",
-  "description": "Protect cached context — During main-chat waits on background agents, shells, Monitors or workflows, admit invisible replays against one rewrite-saving budget.",
+  "version": "0.2.0",
+  "description": "Protect cached context \u2014 Warm main-chat background waits invisibly and waiting sub-agents with short real turns, under independent rewrite-saving budgets.",
   "license": "MIT",
-  "author": { "name": "rezzminator", "url": "https://github.com/rezzminator" },
+  "author": {
+    "name": "rezzminator",
+    "url": "https://github.com/rezzminator"
+  },
   "repository": "https://github.com/rezzminator/cache-keepwarm",
   "homepage": "https://github.com/rezzminator/cache-keepwarm",
-  "keywords": ["claude-code", "prompt-cache", "keep-warm", "function-hooks"],
+  "keywords": [
+    "claude-code",
+    "prompt-cache",
+    "keep-warm",
+    "function-hooks"
+  ],
   "userConfig": {
     "enabled": {
-      "type": "boolean", "title": "Keep tracked waits warm",
+      "type": "boolean",
+      "title": "Keep tracked waits warm",
       "description": "Warm only qualifying main-chat background waits. The launch default; /keepwarm on or off overrides it for this session.",
       "default": true
     },
     "minContext": {
-      "type": "number", "title": "Minimum context tokens",
+      "type": "number",
+      "title": "Minimum context tokens",
       "description": "Do not warm a smaller context; its rewrite is cheap.",
       "default": 20000
     },
     "maxWaitMinutes": {
-      "type": "number", "title": "Waiting-item lease in minutes",
+      "type": "number",
+      "title": "Waiting-item lease in minutes",
       "description": "Stop counting an item as a reason to warm after this many minutes pending; its liveness remains unknown.",
       "default": 180
     },
     "logDir": {
-      "type": "string", "title": "Decision log directory",
+      "type": "string",
+      "title": "Decision log directory",
       "description": "Optional directory for bounded metadata-only session JSONL logs; empty disables disk logging.",
       "default": ""
     },
     "band": {
-      "type": "boolean", "title": "Show the row above the prompt",
+      "type": "boolean",
+      "title": "Show the row above the prompt",
       "description": "Show cache state, wait reason, savings ledger and the session-local keepwarm toggle. Hiding it does not disable warming.",
       "default": true
+    },
+    "subagents": {
+      "type": "boolean",
+      "title": "Warm waiting sub-agents",
+      "description": "Opt in to real warm turns for waiting sub-agents with attributable pending work. Each warm may also wake its parent and incur a separate, unbudgeted parent request.",
+      "default": false
     }
   }
 }
