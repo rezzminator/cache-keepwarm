@@ -206,7 +206,7 @@ test.each(['effort', 'effort-control'])('lane log routing isolates main/subagent
  try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','warm')
  except RuntimeError as e: assert 'stopped fixture' in str(e)
  assert seen.get('AUTO_EFFORT_LOG_FILE')==str(root/'out/warm/effort.jsonl'),seen.get('AUTO_EFFORT_LOG_FILE')
- assert seen.get('AUTO_EFFORT_CONTROL_LOG_FILE')==str(root/'out/warm/effort-control.jsonl'),seen.get('AUTO_EFFORT_CONTROL_LOG_FILE')
+ assert seen.get('AUTO_EFFORT_CONTROL_LOG_FILE')==str(root/'out/warm/effort-control.jsonl'),seen.get('AUTO_EFFORT_CONTROL_LOG_FILE'); assert seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')=='false',seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
  for p in root.glob('effort*.jsonl'): p.unlink()
  try: m.effort_rows(root)
  except RuntimeError as e: assert 'need auto-effort log' in str(e);sys.exit(0)

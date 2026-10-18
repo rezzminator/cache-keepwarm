@@ -23,8 +23,8 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 ### Fixed
 
 - Empty-wait status prints `no current wait` once, not twice.
-- A `session.compact` `precompute` dispatch, which installs nothing, no longer cancels a pending warm or drops the send anchors; every other trigger still resets. The `compact` log row records the metadata-only `trigger` and `agentId`.
-- The live harness voids a lane only on a real compaction of its own main session: a `precompute` or child-scoped (`agentId`) compaction is recorded in the evidence's `compactEvents` and never voids; a `compact` row without its trigger still voids.
+- A `session.compact` `precompute` dispatch, which installs nothing, no longer cancels a pending warm or drops the send anchors; every other trigger still resets. The `compact` log row is written once the compaction answers and records the metadata-only `trigger`, `agentId` and `outcome` (`installed`, `skipped` when a plugin vetoes it, `failed`).
+- The live harness voids a lane only on a real compaction of its own main session: a `precompute`, child-scoped (`agentId`), vetoed (`outcome: skipped`) or failed compaction is recorded in the evidence's `compactEvents` and never voids; a `compact` row without its trigger or outcome still voids. Live lanes launch with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`: Claude Code's prompt-suggestion request writes the conversation's cache after each turn and kept a control lane warm through a 12-minute wait.
 - README public repository status and install guidance.
 
 ## [0.1.0] — 2026-10-17

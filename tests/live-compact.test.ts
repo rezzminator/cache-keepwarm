@@ -27,11 +27,11 @@ with tempfile.TemporaryDirectory() as d:
  except (ValueError,RuntimeError) as e: print(e)
  print(json.dumps(json.loads((root/'out/warm/evidence.json').read_text()).get('compactEvents')))`, runner, JSON.stringify(compact)], { encoding: 'utf8', timeout: 5000 });
 }
-test.each([[{ trigger: 'precompute' }], [{ trigger: 'auto', agentId: 'child' }], [{ trigger: 'precompute', agentId: 'child' }]])('a %j compaction is recorded and never voids the lane', compact => {
+test.each([[{ trigger: 'precompute' }], [{ trigger: 'auto', agentId: 'child' }], [{ trigger: 'precompute', agentId: 'child' }], [{ trigger: 'auto', outcome: 'skipped' }], [{ trigger: 'manual', outcome: 'failed' }]])('a %j compaction is recorded and never voids the lane', compact => {
   const result = lane(compact), [verdict, events] = result.stdout.trim().split('\n');
   expect(verdict, result.stderr).toContain('VOID API/auth'); expect(JSON.parse(events!)).toEqual([{ at: 2, ...compact }]);
 });
-test.each([[{ trigger: 'auto' }, 'auto'], [{ trigger: 'manual' }, 'manual'], [{ trigger: 'plugin', agentId: '' }, 'plugin'], [{ trigger: 'unknown' }, 'unknown'], [{}, 'unrecorded'], [{ agentId: 'child' }, 'unrecorded']])('a main or unrecorded compaction %j voids the lane', (compact, trigger) => {
+test.each([[{ trigger: 'auto' }, 'auto'], [{ trigger: 'auto', outcome: 'installed' }, 'auto'], [{ trigger: 'manual', outcome: 'later' }, 'manual'], [{ trigger: 'manual' }, 'manual'], [{ trigger: 'plugin', agentId: '' }, 'plugin'], [{ trigger: 'unknown' }, 'unknown'], [{}, 'unrecorded'], [{ agentId: 'child' }, 'unrecorded']])('a main or unrecorded compaction %j voids the lane', (compact, trigger) => {
   const result = lane(compact);
   expect(result.stdout, result.stderr).toContain(`VOID compaction during the lane: ${trigger} compaction of the main session`);
 });

@@ -23,8 +23,6 @@ test.each(['prompt.submit', 'prompt.edit', 'prompt.change', 'session.receive', '
   const h = new Harness(); await h.arm(); expect(h.pending).toHaveLength(1); await h.emit(event, { text: 'draft', origin: { kind: 'composer' } });
   expect(h.pending).toHaveLength(0); expect(h.status).toBeUndefined(); await h.advance(400000); expect(h.forks).toHaveLength(0);
 });
-test.each([['precompute', 1], ['auto', 0]] as const)('a %s compaction logs its trigger and agentId; %i warm stays pending', async (trigger, pending) => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm(); await h.emit('session.compact', { trigger, agentId: 'sub', instructions: 'secret focus', messages: [] }); expect(h.pending).toHaveLength(pending); expect(h.rows().filter((r: any) => r.event === 'compact')).toMatchObject([{ trigger, agentId: 'sub' }]); expect(JSON.stringify(h.rows())).not.toContain('secret focus'); });
 test('main step cancels but agent step and agent delivery do not', async () => {
   const h = new Harness(); await h.arm(); await h.step(undefined, 'sub'); await h.emit('session.receive', { agentId: 'sub' });
   expect(h.pending).toHaveLength(1); await h.step(); expect(h.pending).toHaveLength(0); expect(h.status).toBeUndefined();

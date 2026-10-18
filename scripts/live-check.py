@@ -79,15 +79,16 @@ def validity(lane, require_debug=True):
 def compactions(rows):
     """Split the plugin log's compact rows into real compactions of the lane's own main session and recorded others.
     Claude Code also dispatches session.compact as `precompute`, which installs nothing, and for a sub-agent's or a fork's
-    own loop (`agentId`), which leaves the main prefix: both are recorded only. A row without its trigger (a log from
-    before the plugin recorded it) counts as real, so a legacy compaction still voids."""
+    own loop (`agentId`), which leaves the main prefix: both are recorded only, as is one whose outcome is `skipped` (a
+    plugin's veto) or `failed`, which installs nothing. A row without its trigger, or without its outcome (a log from
+    before the plugin recorded them), counts as real, so a legacy compaction still voids."""
     real, recorded = [], []
     for r in rows:
         if r.get('event') != 'compact':
             continue
         trigger, agent = r.get('trigger'), r.get('agentId')
-        if isinstance(trigger, str) and (trigger == 'precompute' or isinstance(agent, str) and agent):
-            recorded.append({k: r[k] for k in ('at', 'trigger', 'agentId') if k in r})
+        if isinstance(trigger, str) and (trigger == 'precompute' or isinstance(agent, str) and agent or r.get('outcome') in ('skipped', 'failed')):
+            recorded.append({k: r[k] for k in ('at', 'trigger', 'agentId', 'outcome') if k in r})
         else:
             real.append(r)
     return real, recorded
