@@ -76,6 +76,30 @@ def validity(lane, require_debug=True):
     if require_debug and not isinstance(lane.get('debug'), str):
         raise ValueError('NOT RUN: debug validity evidence missing')
 
+def compactions(rows):
+    """Split the plugin log's compact rows into real compactions of the lane's own main session and recorded others.
+    Claude Code also dispatches session.compact as `precompute`, which installs nothing, and for a sub-agent's or a fork's
+    own loop (`agentId`), which leaves the main prefix: both are recorded only. A row without its trigger (a log from
+    before the plugin recorded it) counts as real, so a legacy compaction still voids."""
+    real, recorded = [], []
+    for r in rows:
+        if r.get('event') != 'compact':
+            continue
+        trigger, agent = r.get('trigger'), r.get('agentId')
+        if isinstance(trigger, str) and (trigger == 'precompute' or isinstance(agent, str) and agent):
+            recorded.append({k: r[k] for k in ('at', 'trigger', 'agentId') if k in r})
+        else:
+            real.append(r)
+    return real, recorded
+
+def compaction_verdict(rows):
+    """The first real main-session compaction as its verdict text, or None."""
+    real, _ = compactions(rows)
+    if not real:
+        return None
+    trigger = real[0].get('trigger')
+    return f"compaction during the lane: {trigger if isinstance(trigger, str) else 'unrecorded'} compaction of the main session"
+
 def prefix_kept(lane):
     """Each main-thread request record re-sends `keep` of its base request's messages and appends `tail`. One keeping
     fewer than its base sent means Claude Code rewrote the conversation's prefix mid-lane (measured: a plugin reload
@@ -159,8 +183,9 @@ def check(evidence):
         u = row.get('usage', {})
         if u.get('cache_read_input_tokens', 0) < .9 * row.get('context', float('inf')) or u.get('output_tokens', 1000) > 256:
             raise ValueError('FAIL fork usage')
-    if any(r.get('event') == 'compact' for lane in lanes for r in lane['log']):
-        raise ValueError('FAIL unexpected compaction')
+    for lane in lanes:
+        if compaction_verdict(lane['log']):
+            raise ValueError('FAIL unexpected ' + compaction_verdict(lane['log']))
     if not isinstance(warm.get('waitingCapture'), str) or 'cache-keepwarm · waiting on' not in warm['waitingCapture']:
         raise ValueError('FAIL waiting status capture absent')
     if not isinstance(warm.get('returnedCapture'), str) or not warm['returnedCapture'].strip():
@@ -218,8 +243,8 @@ def check_1h(lane, warm1h):
         raise ValueError('FAIL fork usage')
     if ratio < .9:
         raise ValueError('FAIL 1h refresh did not hold: read ratio ' + str(ratio))
-    if any(r.get('event') == 'compact' for r in lane['log']):
-        raise ValueError('FAIL unexpected compaction')
+    if compaction_verdict(lane['log']):
+        raise ValueError('FAIL unexpected ' + compaction_verdict(lane['log']))
     return {'verdict': 'PASS ttl-1h refresh', 'ratio': ratio, 'gapMs': gap}
 
 def cache_ratio(record):

@@ -23,6 +23,8 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 ### Fixed
 
 - Empty-wait status prints `no current wait` once, not twice.
+- A `session.compact` `precompute` dispatch, which installs nothing, no longer cancels a pending warm or drops the send anchors; every other trigger still resets. The `compact` log row records the metadata-only `trigger` and `agentId`.
+- The live harness voids a lane only on a real compaction of its own main session: a `precompute` or child-scoped (`agentId`) compaction is recorded in the evidence's `compactEvents` and never voids; a `compact` row without its trigger still voids.
 - README public repository status and install guidance.
 
 ## [0.1.0] — 2026-10-17

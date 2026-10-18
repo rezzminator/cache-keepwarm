@@ -213,10 +213,10 @@ test.each(['effort', 'effort-control'])('lane log routing isolates main/subagent
  sys.exit(1)`);
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
-test.each([[755, [590, 165]], [4000, [590, 590, 590, 590, 590, 590, 460]], [420, [420]], [1180, [590, 590]]])('probe for %ss sleeps in foreground chunks under the Bash ceiling', (seconds, chunks) => {
+test.each([[755, [590, 165]], [4000, [590, 590, 590, 590, 590, 590, 460]], [420, [420]], [1180, [590, 590]]])('probe for %ss sleeps in foreground chunks under the Bash ceiling, each chunk naming the next', (seconds, chunks) => {
   const result = python(`steps=m.probe_steps(${seconds})
 found=[int(n) for n in m.re.findall(r'time.sleep\\((\\d+)\\)', steps)]
-assert found==${JSON.stringify(chunks)} and steps.count('LONG_PROBE_DONE')==1 and steps.endswith('LONG_PROBE_DONE")'+chr(39)+chr(96)),(found,steps)`);
+assert found==${JSON.stringify(chunks)} and steps.count('LONG_PROBE_DONE')==1 and steps.count('DONE: run the next command now')==len(found)-1 and steps.endswith('LONG_PROBE_DONE")'+chr(39)+chr(96)),(found,steps)`);
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
 test('owned socket is read from the launch line on either stream', () => {

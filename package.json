@@ -6,7 +6,7 @@
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "test": "vitest run --dir tests && npm run test:hooks",
@@ -21,6 +21,6 @@
   "devDependencies": {
     "@types/node": "22.20.4",
     "typescript": "5.9.3",
-    "vitest": "3.2.7"
+    "vitest": "4.1.11"
   }
 }

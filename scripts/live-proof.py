@@ -31,7 +31,9 @@ CHUNK = 590
 
 def probe_steps(seconds):
     chunks = [CHUNK] * (seconds // CHUNK) + ([seconds % CHUNK] if seconds % CHUNK else [])
-    calls = [f'`python3 -c \'import time; time.sleep({n})\'`' for n in chunks[:-1]]
+    # A silent chunk let a Haiku probe agent answer LONG_PROBE_DONE itself after the first sleep, skipping the rest (r12);
+    # each non-final chunk prints that the next command is still owed.
+    calls = [f'`python3 -c \'import time; time.sleep({n}); print("STEP {i} OF {len(chunks)} DONE: run the next command now")\'`' for i, n in enumerate(chunks[:-1], 1)]
     calls.append(f'`python3 -c \'import time; time.sleep({chunks[-1]}); print("LONG_PROBE_DONE")\'`')
     return ', then '.join(calls)
 
@@ -223,8 +225,10 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             if len(logs) == 1:
                 evidence['log'] = rows(logs[0])
             checker.validity(evidence)
-            if any(r.get('event') == 'compact' for r in evidence['log']):
-                raise RuntimeError('VOID compaction during the lane: the context reached the auto-compact window')
+            evidence['compactEvents'] = checker.compactions(evidence['log'])[1]
+            void = checker.compaction_verdict(evidence['log'])
+            if void:
+                raise RuntimeError('VOID ' + void)
             elapsed = time.monotonic() - started
             if elapsed >= 60 and 'waitingCapture' not in evidence:
                 evidence['waitingCapture'] = capture(socket)
@@ -246,6 +250,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
         if len(logs) != 1:
             raise RuntimeError('ERROR need exactly one plugin decision log')
         evidence['log'] = rows(logs[0])
+        evidence['compactEvents'] = checker.compactions(evidence['log'])[1]
         evidence['effort'] = effort_rows(directory)
         evidence['subagentEffort'] = effort_rows(directory, subagent=True)
         evidence['debug'], evidence['debugWritten'] = debug_text(directory)

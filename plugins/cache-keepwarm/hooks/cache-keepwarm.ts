@@ -8,6 +8,7 @@ import { decideWarm, type Decision, type ReasonCode } from '../src/decision.ts';
 import { parseControl, effectiveEnabled } from '../src/control.ts';
 import { pickRestore, snapshotSession, sessionKey, sessionPrefix, staleKeys, type Anchor } from '../src/resume.ts';
 import { appendLog, logFileName, logBase, leafRefusal, type LogRow, type LogStat } from '../src/log.ts';
+import { compactFacts, compactResets } from '../src/compact.ts';
 import { subagentMessage, formatWaiting, formatStopped, formatState, formatBand, formatOutcome, type StatusView } from '../src/status.ts';
 type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: number; originalExpiry: number; context: number; model: string; spent: number; warms: number; epoch: number };
 type WarmCharge = { a: SubState; epoch: number; at: number; text: string; turnId?: string; episode: NonNullable<SubState['episode']>; sessionId: string; owner?: State };
@@ -47,8 +48,8 @@ async function persist($: EngineInterface, s: State) {
   s.stores = s.stores.then(() => $.store.set(key, data)).catch(error => { $.ui.toast(`cache-keepwarm · store write failed (${String(error)})`); });
   await s.stores;
 }
-async function log($: EngineInterface, s: State, event: string, reason = s.reason, usage?: Usage, episode = s.episode, row?: LogRow) {
-  s.rows = appendLog(s.rows, row ?? { at: s.now, ...(s.anchor ? { anchorAt: s.anchor.at, ...(s.anchor.entryTtl ? { entryTtl: s.anchor.entryTtl } : {}) } : {}), event, epoch: episode?.epoch ?? s.epoch, items: episode?.items ?? [], ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: episode?.context ?? s.anchor?.context ?? null, spent: episode?.spent ?? 0, reason, ...(usage ? { usage } : {}), ...(episode ? { ledger: budgetLedger({ context: episode.context, ttl: s.ttl.ttl, spent: episode.spent, warms: episode.warms }), warms: episode.warms } : {}), session: s.session });
+async function log($: EngineInterface, s: State, event: string, reason = s.reason, usage?: Usage, episode = s.episode, row?: LogRow, extra?: Partial<LogRow>) {
+  s.rows = appendLog(s.rows, { ...(row ?? { at: s.now, ...(s.anchor ? { anchorAt: s.anchor.at, ...(s.anchor.entryTtl ? { entryTtl: s.anchor.entryTtl } : {}) } : {}), event, epoch: episode?.epoch ?? s.epoch, items: episode?.items ?? [], ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: episode?.context ?? s.anchor?.context ?? null, spent: episode?.spent ?? 0, reason, ...(usage ? { usage } : {}), ...(episode ? { ledger: budgetLedger({ context: episode.context, ttl: s.ttl.ttl, spent: episode.spent, warms: episode.warms }), warms: episode.warms } : {}), session: s.session }), ...extra });
   if (!s.options.logDir || !s.id) return;
   const logId = s.id, dir = s.options.logDir.replace(/\/$/, ''), name = logFileName(s.id, s.instance), text = s.rows.map(r => JSON.stringify(r)).join('\n') + '\n';
   s.writes = s.writes.then(() => writeLog($, s, logId, dir, name, text)).catch(error => { logFault($, s, logId, `log write failed (${String(error)})`); });
@@ -301,7 +302,11 @@ export const register: Register = (on, options) => {
     s.episode = { pending: false, items: snapshot.items, known: snapshot.known, started: previous?.started ?? s.now, originalExpiry: previous?.originalExpiry ?? (s.anchor?.at ?? s.now) + TTL_MS[s.ttl.ttl], context: s.anchor?.context ?? 0, model: s.anchor?.model ?? '', spent: previous?.spent ?? 0, warms: previous?.warms ?? 0, epoch };
     await arm($, s, epoch); return next(e);
   });
-  on('session.compact', async ($, e, next) => { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); await log($, s, 'compact'); return next(e); });
+  on('session.compact', async ($, e, next) => {
+    const c = compactFacts(e);
+    if (compactResets(c)) { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); }
+    await log($, s, 'compact', s.reason, undefined, s.episode, undefined, c); return next(e);
+  });
   on('classic.PostModelSwitch', async ($, e, next) => { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); await log($, s, 'model-switch'); return next(e); });
   on('session.end', async ($, e, next) => {
     if (s.inFlight) s.departing ??= { ...s, inactive: true };
