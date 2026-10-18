@@ -10,7 +10,7 @@
 
 </div>
 
-> **Status.** 0.1.0 is an initial local build: unreleased, with no remote repository yet. The live proof sequences that gate publication have not all run on this tree; § Development states what a release requires. A 1h cache is not warmed (§ Limits).
+> **Status.** 0.1.0 is unreleased, with no remote repository yet. On Claude Code 2.1.302 the tree passed the live bar a release requires: three clean serial `--all` sequences and one clean `--lane ttl-1h` (§ Development).
 
 ## Contents
 
@@ -46,6 +46,8 @@ claude plugin marketplace add rezzminator/cache-keepwarm
 claude plugin install cache-keepwarm@cache-keepwarm
 ```
 
+In a chat, `/plugin install cache-keepwarm --marketplace rezzminator/cache-keepwarm` does it in one step.
+
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` also works in the `env` block of `settings.json`. The plugin is built against the plugin types of Claude Code 2.1.302 and needs a release with function hooks; function hooks are early access and may change between releases.
 
 ## Why an invisible replay
@@ -74,7 +76,7 @@ Any other argument prints the usage and changes nothing. A new session or `/clea
 
 ## The band
 
-One row above the prompt shows a cache-state dot, the reason or current wait, a toggle and the ledger. Its toggle runs the same operation as `/keepwarm on|off`. The row is skipped while a survey is shown. `band` set to `false` hides only the row; the status line, the command and the warming are unaffected.
+One row above the prompt shows a cache-state dot, the reason or current wait, a toggle and the ledger. Its toggle runs the same operation as `/keepwarm on|off`. The row stays after a returned wait, showing the last outcome, and is skipped while a survey is shown. `band` set to `false` hides only the row; the status line, the command and the warming are unaffected.
 
 After a returning wait, one closing toast gives the elapsed time, the actual cache-read percentage of the returning request and an explicitly estimated net saving. The last outcome stays in the band and in `/keepwarm`; the toast is never a model prompt or a transcript turn.
 
@@ -97,10 +99,10 @@ The anchor for the timer is the last main request that read or wrote the cache; 
 
 The status line is one line, retexted once a minute while an episode is armed; a stop notice persists until the next main turn.
 
-- Waiting: `cache-keepwarm · waiting on agent "Audit the release notes" +1 more · 9m · warms 2 · next in 3m`; an assumed lifetime appends ` · TTL assumed 5m`; an elapsed time of 65 minutes reads `1h05m`.
+- Waiting: `cache-keepwarm · waiting on agent "Audit the release notes" +1 more · 9m · warms 2 · next in 3m`; an assumed lifetime appends `· TTL assumed 5m`; an elapsed time of 65 minutes reads `1h05m`.
 - Not warming: `cache-keepwarm · not warming: context 19,999 tokens is under the 20,000 minimum`, `not warming: no main request seen since the plugin loaded`, `not warming: 1h refresh unproven`.
-- Stopped: `cache-keepwarm · stopped: ` followed by one reason: `agent "X" pending 180m with no result, liveness unknown` · `the next warm would cost more than the rewrite it saves (10 warms)` · `the cache had already lapsed (timer fired 4m late)` · `agent "X" was killed` · `warm failed (api-error 529)` · `timer failed ({message})` · `this Claude Code gives the Stop hook no background_tasks`.
-- Log: `cache-keepwarm · log write failed ({message})`, shown once; warming continues.
+- Stopped: `cache-keepwarm · stopped:` followed by one reason: `agent "X" pending 180m with no result, liveness unknown` · `the next warm would cost more than the rewrite it saves (10 warms)` · `the cache had already lapsed (timer fired 4m late)` · `agent "X" was killed` · `warm failed (api-error 529)` · `timer failed ({message})` · `this Claude Code gives the Stop hook no background_tasks`.
+- Log: `cache-keepwarm · log write failed ({message})` or `log write refused ({reason})`, shown once; warming continues. A refusal names `log directory moved`, `log directory is not a directory`, `log directory unresolved` or `log target is a link or not a regular file`.
 
 Labels (an agent's description, a command line) are sanitized to 40 characters plus an ellipsis for display and appear nowhere else.
 
@@ -113,10 +115,14 @@ Five options, set in the plugin's `/config` page or by variable:
 | `CACHE_KEEPWARM_ENABLED` | `enabled` | `true` | Warm at all; `/keepwarm` overrides it for one chat |
 | `CACHE_KEEPWARM_MIN_CONTEXT` | `minContext` | `20000` | Smallest context in tokens worth warming |
 | `CACHE_KEEPWARM_MAX_WAIT_MINUTES` | `maxWaitMinutes` | `180` | Minutes an item may stay pending, counted from its first sighting, before it stops justifying a warm |
-| `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for `{session id}.jsonl`, a metadata-only decision log of at most 500 rows; empty writes none |
+| `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for `{session id}.{instance}.jsonl`, a metadata-only decision log of at most 500 rows per Claude Code process; empty writes none |
 | `CACHE_KEEPWARM_BAND` | `band` | `true` | Show the row above the prompt |
 
 Precedence is variable, then option, then default. A blank variable is absent; booleans read `1`, `0`, `true` or `false` in any case. A bad variable is named in the status and the option's default applies, never the configured option. The log never contains a label, command or description.
+
+The log directory must be private to you. The plugin resolves it once and pins that resolution, refusing to write if it later moves, and it refuses a leaf that is a link or not a regular file. Claude Code offers a plugin no write that refuses to follow a link, so a directory that other users can write still leaves a gap between check and write. The `{instance}` is a random identifier per Claude Code process, so two processes on one session never share a log file.
+
+Persistence keeps one snapshot per Claude Code process (`session:{session id}:{instance}`) of the last-use anchor and the numeric ledger, with its save time. A resumed session restores the newest valid snapshot for its own session id. Snapshots that are invalid, or older than seven days, are deleted when a session starts. A snapshot never restores the `/keepwarm` override, a timer, an admission or a grant. The plugin store is one JSON file shared by all processes; how concurrent writes from two processes interleave is unmeasured.
 
 ## TTL resolution
 
@@ -127,6 +133,8 @@ The cache lifetime is resolved per episode, first match wins:
 3. The session's observed lifetime: a request sent 330,000 to 3,300,000 ms after the previous one that read at least 90% of the previous context means 1h; below 90% means 5m; outside that gap there is no evidence.
 4. `ENABLE_PROMPT_CACHING_1H=1`: 1h.
 5. Otherwise 5m, shown as `TTL assumed 5m`. An assumed 5m is never late, only more frequent.
+
+A warm keeps that lifetime while it reads at least 90% of the context: the replay refreshed the entry the chat already had. A warm that reads less rewrote the entry (the prefix changed under the chat, or the entry was gone), and Claude Code writes a replay at its sub-agent lifetime, not the main chat's: `FORCE_PROMPT_CACHING_5M=1` gives 5m, then `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` equal to `5m` or `1h`, then `ENABLE_PROMPT_CACHING_1H=1` gives 1h, otherwise 5m. The next warm is timed on that copy's lifetime, and the log writes a `rewrite` row carrying `entryTtl`. Claude Code's `subagentPromptCacheTtl` setting is not read, so a copy that only the setting makes 1h is timed as 5m: early, never late. The order is read from the Claude Code 2.1.302 source; the rewrite path is unit-tested, not provoked live.
 
 ## Budget and ledger
 
@@ -154,11 +162,13 @@ The band, `/keepwarm`, the log and the closing toast show the same ledger: actua
 - No cap on a replay. The engine's fork has no output cap or cancel, so the budget is a forecast before each replay plus actual accounting after; there is no hard realized-spend limit, and an admitted replay cannot be cancelled.
 - No sub-agent waits. Only the main chat is served.
 - No wait on the user. Only tracked background work warms the cache.
-- No 1h warming yet. Whether a replay refreshes a 1h entry is unproven; the first live attempt was void (its returning request and replay failed authentication, so it holds no valid refresh measurement), which is no evidence either way. A 1h episode shows `not warming: 1h refresh unproven` until a valid live run proves the refresh.
+- 1h warming is measured on Claude Code 2.1.302 only. Two live `ttl-1h` runs held a wait of over 4,000 seconds on a 1h cache: one replay at 80% of the lifetime read all but two tokens of the context from cache, and the returning request read about 98.8% (§ Development). A release where the refresh is not re-measured keeps the claim labelled so; a failed rerun turns 1h warming off, and a 1h episode then shows `not warming: 1h refresh unproven`.
+- A plugin reload rewrites the cached prefix. When a plugin reloads mid-wait (observed after an installed plugin was updated), Claude Code re-renders the environment block near the start of every request (measured on 2.1.302: 48,126 to 49,901 characters), so the cache is lost for the chat and the warm alike. The warm then pays a rewrite, the ledger accounts it, and the episode re-times on the copy's lifetime (§ TTL resolution).
 - Unknown wake behaviour. Claude Code gives a task no expected return time and no flag saying whether it can wake the chat; the plugin treats the four known kinds as waking and refuses the rest.
 - A shell or Monitor killed from the UI while the chat is idle may send no notification; its item is warmed until `maxWaitMinutes` or the budget ends.
 - Whether Claude Code's idle compaction counts a replay as activity at 1h is untested.
 - Replay spend is invisible to tools that read assistant rows only.
+- Managed organizations: a Claude Code managed by an organization skips a user-installed plugin's `classic.Stop`, `session.compact` and `classic.PostModelSwitch` hooks unless the organization lists the plugin, so warming and episode ends do not run there.
 - The live lanes are exercised on Linux only; macOS and Windows are untested.
 
 ## Development
@@ -171,10 +181,22 @@ npm run typecheck
 npm run validate:plugin
 npm run check:structure
 npm run release:check
-npm run live -- --lane wait-return   # also ttl-1h, collision, stale; or --all
+npm run live -- --lane wait-return --cwd <trusted-dir> --auto-effort-dir <path> --output <outside-repo-path>   # also ttl-1h, collision, stale; or --all
 ```
 
-The unit gates (decisions, and the function-hook tests on a stand-in and on the testing kit) are unit fidelity; there is no hermetic end-to-end tier. The live lanes boot a real Claude Code on the invoking user's own configuration with the plugin loaded through `CLAUDE_CODE_PLUGIN_DIRS`, never copy credentials, and judge transcript usage and log rows, never a model's statement. A release needs three clean serial `--all` sequences on the final tree; this tree has not been so gated. `CLAUDE.md` is the testing manual.
+The unit gates (decisions, and the function-hook tests on a stand-in and on the testing kit) are unit fidelity; there is no hermetic end-to-end tier. The live lanes boot a real Claude Code on the invoking user's own configuration with the plugin loaded through `CLAUDE_CODE_PLUGIN_DIRS`, never copy credentials, and judge transcript usage and log rows, never a model's statement. The checker voids a lane, never passes or fails it, on an API or auth error, a compaction mid-lane, or a main request that keeps fewer messages of its base request than the base sent: Claude Code rewrote the prefix mid-lane (§ Limits, plugin reload), so the lane proves nothing about the cache. A release needs three clean serial `--all` sequences and one clean `--lane ttl-1h` on the final tree; a voided lane does not count.
+
+0.1.0 on Claude Code 2.1.302, Haiku, Linux:
+
+| Sequence | Warm return read | Control return read | Collision | Stale |
+| --- | --- | --- | --- | --- |
+| `--all` 1 | 98.9% | 0.0% | pass | pass |
+| `--all` 2 | 98.7% | 0.0% | pass | pass |
+| `--all` 3 | 98.7% | 0.0% | pass | pass |
+
+The `ttl-1h` lane held a 4,013-second wait on a 1h cache: one replay 2,880 seconds after the anchor read 56,148 of 56,150 tokens from cache, and the returning request read 98.7%. `CLAUDE.md` is the testing manual.
+
+The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the chat launcher `pfm`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. The band stays after a returned wait, so a capture checks that the waiting status cleared, not that every plugin name is gone.
 
 ## Credits
 

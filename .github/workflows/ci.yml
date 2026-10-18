@@ -1,0 +1,39 @@
+name: CI
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm install --global @anthropic-ai/claude-code@2.1.302
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run validate:plugin
+      - run: npm run check:structure
+      - run: npm run release:check
+  release:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require a version newer than main
+        run: |
+          base="$(git show origin/main:package.json | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).version')"
+          RELEASE_BASE_VERSION="$base" npm run release:check

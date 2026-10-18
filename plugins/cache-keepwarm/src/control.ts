@@ -1,3 +1,3 @@
 export type ControlAction = 'on' | 'off' | 'status' | 'invalid';
-export function parseControl(_args: string): ControlAction { throw new Error('not built'); }
-export function effectiveEnabled(_launch: boolean, _override: boolean | null): boolean { throw new Error('not built'); }
+export function parseControl(args: string): ControlAction { const word = args.trim(); return word === '' || word === 'status' ? 'status' : word === 'on' || word === 'off' ? word : 'invalid'; }
+export function effectiveEnabled(launch: boolean, override: boolean | null): boolean { return override ?? launch; }

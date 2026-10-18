@@ -18,4 +18,6 @@ Keeps the main Claude Code chat's prompt cache warm while it waits on a backgrou
 
 A variable beats the option, the option beats the default; a blank variable is absent, booleans read `1`, `0`, `true` or `false` in any case, and a bad variable is named in the status while the default applies.
 
-It requires `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. The root README of the repository is the full documentation: https://github.com/rezzminator/cache-keepwarm (the remote does not exist yet).
+Install, once the repository is published (its remote does not exist yet): `/plugin install cache-keepwarm --marketplace rezzminator/cache-keepwarm`.
+
+It requires `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. A Claude Code managed by an organization skips the plugin's `classic.Stop`, `session.compact` and `classic.PostModelSwitch` hooks unless the organization lists the plugin. The root README of the repository is the full documentation: <https://github.com/rezzminator/cache-keepwarm> (the remote does not exist yet).

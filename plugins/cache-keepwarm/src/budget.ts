@@ -4,12 +4,25 @@ export type Usage = Pick<ModelUsage, 'input_tokens' | 'output_tokens' | 'cache_r
 export interface BudgetLedger { context: number; ttl: Ttl; spent: number; warms: number; allowance: number; protecting: number; remaining: number }
 export interface ClosedLedger { elapsedMs: number; readPercent: number | null; netSaved: number | null; reason: 'estimated' | 'early' | 'miss' | 'unknown' }
 export interface SessionLedger { spent: number; warms: number; episodes: number; estimatedNet: number; unknown: number }
-export function rewriteSaved(_input: { context: number; ttl: Ttl }): number { throw new Error('not built'); }
-export function warmSpend(_usage: Usage): number { throw new Error('not built'); }
-export function warmForecast(_input: { context: number; tail: number }): number { throw new Error('not built'); }
-export function allow(_input: { spent: number; forecast: number; saved: number }): boolean { throw new Error('not built'); }
-export function budgetLedger(_input: { context: number; ttl: Ttl; spent: number; warms: number }): BudgetLedger { throw new Error('not built'); }
-export function closeLedger(_input: { ledger: BudgetLedger; waitStartedAt: number; originalExpiryAt: number; returnedAt: number; usage: Usage | null; samePrefix: boolean | null }): ClosedLedger { throw new Error('not built'); }
-export function emptySessionLedger(): SessionLedger { throw new Error('not built'); }
-export function recordWarm(_session: SessionLedger, _usage: Usage): SessionLedger { throw new Error('not built'); }
-export function recordOutcome(_session: SessionLedger, _outcome: ClosedLedger): SessionLedger { throw new Error('not built'); }
+const rounded = (n: number): number => Math.round(n * 1e6) / 1e6;
+export function rewriteSaved({ context, ttl }: { context: number; ttl: Ttl }): number { return rounded(context * (ttl === '5m' ? 1.15 : 1.9)); }
+export function warmSpend(usage: Usage): number { return rounded(usage.cache_read_input_tokens * 0.1 + usage.cache_creation_input_tokens * 2 + usage.input_tokens + usage.output_tokens * 5); }
+export function warmForecast({ context, tail }: { context: number; tail: number }): number { return rounded(context * 0.1 + tail * 2 + 64 + 256 * 5); }
+export function allow({ spent, forecast, saved }: { spent: number; forecast: number; saved: number }): boolean { return [spent, forecast, saved].every(n => Number.isFinite(n) && n >= 0) && spent + forecast <= saved; }
+export function budgetLedger({ context, ttl, spent, warms }: { context: number; ttl: Ttl; spent: number; warms: number }): BudgetLedger {
+  const allowance = rewriteSaved({ context, ttl });
+  return { context, ttl, spent, warms, allowance, protecting: rounded(context * (ttl === '5m' ? 1.25 : 2)), remaining: rounded(allowance - spent) };
+}
+export function closeLedger(input: { ledger: BudgetLedger; waitStartedAt: number; originalExpiryAt: number; returnedAt: number; usage: Usage | null; samePrefix: boolean | null; settled?: boolean }): ClosedLedger {
+  const { ledger, usage } = input, elapsedMs = Math.max(0, input.returnedAt - input.waitStartedAt);
+  const valid = usage !== null && [usage.input_tokens, usage.output_tokens, usage.cache_read_input_tokens, usage.cache_creation_input_tokens].every(n => Number.isFinite(n) && n >= 0);
+  const total = valid ? usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens : 0;
+  const readPercent = valid && total > 0 ? usage.cache_read_input_tokens / total * 100 : null;
+  if (readPercent === null || input.samePrefix !== true || input.settled === false) return { elapsedMs, readPercent, netSaved: null, reason: 'unknown' };
+  if (input.returnedAt < input.originalExpiryAt) return { elapsedMs, readPercent, netSaved: -ledger.spent, reason: 'early' };
+  if (readPercent < 90) return { elapsedMs, readPercent, netSaved: -ledger.spent, reason: 'miss' };
+  return { elapsedMs, readPercent, netSaved: rounded(ledger.allowance - ledger.spent), reason: 'estimated' };
+}
+export function emptySessionLedger(): SessionLedger { return { spent: 0, warms: 0, episodes: 0, estimatedNet: 0, unknown: 0 }; }
+export function recordWarm(session: SessionLedger, usage: Usage): SessionLedger { return { ...session, spent: rounded(session.spent + warmSpend(usage)), warms: session.warms + 1 }; }
+export function recordOutcome(session: SessionLedger, outcome: ClosedLedger): SessionLedger { return { ...session, episodes: session.episodes + 1, estimatedNet: rounded(session.estimatedNet + (outcome.netSaved ?? 0)), unknown: session.unknown + (outcome.netSaved === null ? 1 : 0) }; }
