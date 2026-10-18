@@ -2,3 +2,5 @@ node_modules/
 coverage/
 *.tsbuildinfo
 __pycache__/
+# Claude Code writes this tsconfig at plugin load, extending its own ignored .claude-plugin/types/; the root tsconfig.json is the source.
+plugins/cache-keepwarm/tsconfig.json
