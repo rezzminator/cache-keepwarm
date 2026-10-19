@@ -26,7 +26,7 @@ A Claude Code function-hooks plugin: while the main chat or a waiting sub-agent 
 - A prefix rewritten mid-lane is VOID too: `prefix_kept()` in `scripts/live-check.py` reads the lane transcript's main-thread api-request records, each re-sending `keep` of its base request's messages and appending `tail`; one keeping fewer than its base sent reads `VOID prefix rewritten mid-lane: request {id} kept {k} of {n} messages`, and missing or malformed records read `NOT RUN: main-thread request records missing` or `NOT RUN: main-thread request record malformed`.
 - A plugin reloading mid-wait (an installed plugin's update) makes Claude Code re-render the environment block in `messages[1]`, measured; no plugin, setting or seat change runs on the machine while a lane runs, and a voided lane does not count toward the publish bar.
 - The evidence directory is the `--output` argument or a temporary directory outside the repository; no run output is written in the repository.
-- The band stays after a returned wait by design, so a capture checks that the waiting status cleared, never that every `cache-keepwarm` string is gone.
+- A returned-wait capture checks that the `cache-keepwarm · waiting on` status cleared, never that every `cache-keepwarm` string is gone: a toast carries the same prefix.
 - A lane starts with a `need` prelude (exact Claude Code version, function hooks on, plugin loaded); a missing need prints `ERROR {need}` and exits 2, a lane not run reads `NOT RUN`, never a pass.
 - Every live checker rejects an API or auth error first (synthetic or error-flagged model reply, debug-log API error), then checks model and usage; an invalid run reports `VOID`, never a measured failure.
 - A poke turn (its `Keep-warm poke` prompt up to the next prompt) is the plugin's own traffic: `poke_turns()` in `scripts/live-check.py` takes it out of the quiet window, its auto-effort steps are allowed, and its text is checked exactly, header, one bullet per tracked id and footer.
@@ -40,7 +40,7 @@ A Claude Code function-hooks plugin: while the main chat or a waiting sub-agent 
 - **Credentials stay in the seat:** a live lane runs on the invoking user's own Claude configuration. NEVER copy a credentials file and NEVER create an alternate `CLAUDE_CONFIG_DIR`; isolation is the lane's working directory and plugin directory.
 - A new behaviour lands in `plugins/cache-keepwarm/src/` as a pure function with a test watched failing first; the adapter only wires it.
 - `decision.ts` owns every fire, skip and stop, each with a stable reason code; the adapter holds no policy condition that duplicates it.
-- Spend, allowance, protected rewrite and estimated net come from `budget.ts` only; the band, `/keepwarm`, the log and the closing line render those numbers. Costs are input-token equivalents; no USD without a verified engine price.
+- Spend, allowance, protected rewrite and estimated net come from `budget.ts` only; the session state JSON, `/keepwarm`, the log and the closing line render those numbers. Costs are input-token equivalents; no USD without a verified engine price.
 - A closing net saving is labelled an estimate; unknown usage is unknown, never zero.
 - Wait timing comes from structured facts only; an unknown ETA is `unknown`, never inferred from task or command text.
 - A label enters the poke text only sanitized (`sanitizeLabel`), and never the log or a reason code.
