@@ -461,6 +461,30 @@ def check_subagents(evidence):
     return {'verdict': 'PASS subagent-wait cache separation', 'lanes': results}
 
 
+def check_state(evidence):
+    """One live chat: the public disk record before and after the immediate off command."""
+    validity(evidence, require_debug=False)
+    initial, off = evidence.get('initialState'), evidence.get('offState')
+    fields = {'v', 'sessionId', 'pid', 'updatedAt', 'enabled', 'source', 'state', 'reason', 'pokes', 'nextAt', 'protectingTokensEq'}
+    for record in [initial, off]:
+        if not isinstance(record, dict) or set(record) != fields or record['v'] != 1:
+            raise ValueError('FAIL incomplete v1 state record')
+        if record['sessionId'] != evidence.get('sessionId') or type(record['pid']) is not int or record['pid'] <= 0:
+            raise ValueError('FAIL state session/PID identity')
+        if type(record['updatedAt']) is not int or record['updatedAt'] <= 0:
+            raise ValueError('FAIL state timestamp')
+        pokes = record['pokes']
+        if pokes is not None and (not isinstance(pokes, dict) or set(pokes) != {'count', 'max'} or type(pokes['count']) is not int or type(pokes['max']) is not int or not 0 <= pokes['count'] <= pokes['max']):
+            raise ValueError('FAIL state poke counters')
+    if initial['enabled'] is not True or initial['source'] != 'launch' or initial['state'] != 'on':
+        raise ValueError('FAIL initial enabled v1 state')
+    if off['enabled'] is not False or off['source'] != 'session' or off['state'] != 'off' or off['reason'] != 'off' or off['nextAt'] is not None:
+        raise ValueError('FAIL off v1 replacement')
+    if off['pid'] != initial['pid'] or off['updatedAt'] < initial['updatedAt'] or evidence.get('pidAlive') is not True:
+        raise ValueError('FAIL state liveness/replacement identity')
+    return {'verdict': 'PASS v1 state write then /keepwarm off', 'sessionId': off['sessionId'], 'pid': off['pid']}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('evidence', type=Path)
@@ -470,7 +494,7 @@ def main():
         mode = evidence.get('mode')
         if mode == 'cap' and len(evidence.get('lanes', [])) != 1:
             raise ValueError('NOT RUN: cap lane incomplete')
-        result = check_subagents(evidence) if mode == 'subagent-wait' else check_cap(evidence['lanes'][0]) if mode == 'cap' else check(evidence)
+        result = check_state(evidence) if mode == 'state' else check_subagents(evidence) if mode == 'subagent-wait' else check_cap(evidence['lanes'][0]) if mode == 'cap' else check(evidence)
     except (ValueError, OSError) as error:
         print(str(error))
         return 2

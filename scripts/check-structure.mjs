@@ -10,7 +10,7 @@ const forbidden = [slash + 'home' + slash, slash + 'Users' + slash];
 function inspect(path, text, label = path) {
   count++;
   if (forbidden.some(value => text.includes(value)) || (text.match(/[\w.+-]+@[\w.-]+\.(?:com|net|org)\b/g) ?? []).some(email => !/@example\.(?:com|net|org)$/.test(email))) { console.error(`LEAK ${label}`); failed = true; }
-  if (/^plugins\/cache-keepwarm\/.*\.(ts|json)$/.test(path) && /\bprofessor\b|\bpfm\b/i.test(text)) { console.error(`STANDALONE ${label}`); failed = true; }
+  if (/^plugins\/cache-keepwarm\/.*\.(ts|mjs|json)$/.test(path) && /\bprofessor\b|\bpfm\b/i.test(text)) { console.error(`STANDALONE ${label}`); failed = true; }
   if (/^(?:plugins\/cache-keepwarm\/src|tests)\/.*\.ts$/.test(path) && text.split('\n').length - 1 > 300) { console.error(`SIZE ${label}: exceeds 300 lines`); failed = true; }
   if (path === 'plugins/cache-keepwarm/hooks/cache-keepwarm.ts' && text.split('\n').length - 1 > 500) { console.error(`SIZE ${label}: exceeds 500 lines`); failed = true; }
   if (/^plugins\/cache-keepwarm\/src\/.*\.ts$/.test(path) && (/\$\./.test(text) || /^import (?!type\b)/m.test(text))) { console.error(`PURE ${label}`); failed = true; }

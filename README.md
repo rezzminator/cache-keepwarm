@@ -5,12 +5,12 @@
 **Keeps Claude Code prompt caches warm during background waits with visible pokes, for the main chat and waiting sub-agents, capped per wait and each under its own rewrite-saving budget.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.3.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>
 
-> **Status.** Public at [rezzminator/cache-keepwarm](https://github.com/rezzminator/cache-keepwarm), with development on `develop`. Version 0.3.0 keeps waits warm with visible pokes, at most `maxPokes` per unchanged wait, and pokes waiting sub-agents by default. Its live measurements are recorded below; they are not a claim that 0.3.0 has been published.
+> **Status.** Public at [rezzminator/cache-keepwarm](https://github.com/rezzminator/cache-keepwarm), with development on `develop`. Version 0.4.0 keeps waits warm with visible pokes, at most `maxPokes` per unchanged wait, and pokes waiting sub-agents by default. Its live measurements are recorded below; they are not a claim that 0.4.0 has been published.
 
 ## Contents
 
@@ -18,7 +18,7 @@
 - [Install](#install)
 - [The poke](#the-poke)
 - [Commands](#commands)
-- [The band](#the-band)
+- [Session state JSON](#session-state-json)
 - [When it pokes](#when-it-pokes)
 - [Status texts](#status-texts)
 - [Configuration](#configuration)
@@ -80,11 +80,42 @@ A poke is a real turn, so it costs what a turn costs at the chat's effort, and o
 
 Any other argument prints the usage and changes nothing. A new session or `/clear` resets the override to the launch default (`enabled`).
 
-## The band
+## Session state JSON
 
-One row above the prompt shows a cache-state dot, the reason or current wait, a toggle and the ledger. Its toggle runs the same operation as `/keepwarm on|off`. The row stays after a returned wait, showing the last outcome, and is skipped while a survey is shown. `band` set to `false` hides only the row; the status line, the command and the pokes are unaffected.
+External status-line readers get one metadata-only file per **main session**, never a sub-agent view:
 
-After a returning wait, one closing toast gives the elapsed time, the actual cache-read percentage of the returning request and an explicitly estimated net saving. The last outcome stays in the band and in `/keepwarm`; the toast is never a model prompt or a transcript turn.
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/cache-keepwarm/sessions/{sessionId}.json
+```
+
+`CACHE_KEEPWARM_STATE_DIR` overrides the sessions directory itself (an absolute path, not a parent). Blank is absent. This transport variable is not a `/config` option. Node.js 20+ must be on Claude Code's `PATH` for the file writer. A same-directory, exclusive temporary file (mode `0600`) is renamed atomically over the destination; new directories use `0700`. Writers serialize changes within the process, skip unchanged projections, and publish on main status changes and `/keepwarm on|off`. Files contain no task labels, command text, messages, or sub-agent views.
+
+### v1 fields
+
+| Field | Contract |
+| --- | --- |
+| `v` | Schema version, exactly `1` |
+| `sessionId` | Main Claude session id; filename is `{sessionId}.json` |
+| `pid` | Claude Code process PID, not the temporary writer PID |
+| `updatedAt` | Epoch milliseconds when this projection is published |
+| `enabled` | Effective launch default or session override, boolean |
+| `source` | `launch` or `session` |
+| `state` | `warming`, `on`, `stopped`, or `off` as below |
+| `reason` | Stable `ReasonCode` as below; disabled always reports `off` |
+| `pokes` | `{count,max}` for the main wait, or `null` if unavailable |
+| `nextAt` | Scheduled future main poke, epoch milliseconds; `null` without a future due time |
+| `protectingTokensEq` | Gross hypothetical rewrite cost from the current budget ledger; number or `null`, never a realized saving |
+
+### State mapping
+
+- `warming`: `eligible` or `in-flight`, only while the main view has waiting items. Without waiting items these reasons map to `on`.
+- `stopped`: `poke-limit`, `budget`, `poke-failed`, `timer-failed`, `stale`, `ended`.
+- `off`: `off`, or any view with `enabled: false` (its reason is normalized to `off`).
+- `on`: `agent-not-waiting`, `busy`, `typing`, `inventory-unknown`, `nothing-pending`, `usage-unknown`, `usage-invalid`, `small`, `1h-unproven`, `cache-cold`, `expiry-safety`, `wake-unknown`, `cannot-wake`, `imminent`, `marginal`, `resumed`, `idle`.
+
+`on` means enabled, not currently warming; it does not promise a warm cache. `nextAt` is `null` unless the state is `warming` with a future timer. Session end deletes the file, including before `/clear` or resume changes the id; the replacement session publishes its own view. Abrupt termination can leave a file: readers must check the Claude PID's liveness, not expire by age (a quiet `on` session is legitimate). PID reuse is a platform limitation of PID-only liveness. Resuming the same session in two processes shares one filename; the last atomic writer wins.
+
+A write or deletion failure logs the full destination path and error through the plugin's debug log and never throws into chat. The next changed view retries. `/keepwarm status` remains the direct in-chat inspection path. After a returning wait, the closing toast gives elapsed time, actual cache-read percentage and explicitly estimated net saving; the last outcome stays in `/keepwarm`.
 
 ## When it pokes
 
@@ -113,7 +144,7 @@ Labels (an agent's description, a command line) are sanitized to 40 characters p
 
 ## Configuration
 
-Seven options, set in the plugin's `/config` page or by variable:
+Six options, set in the plugin's `/config` page or by variable:
 
 | Variable | Option | Default | Meaning |
 | --- | --- | --- | --- |
@@ -123,7 +154,6 @@ Seven options, set in the plugin's `/config` page or by variable:
 | `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for `{session id}.{instance}.jsonl`, a metadata-only decision log of at most 500 rows per Claude Code process; empty writes none |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents in independent episodes; each poke also wakes the spawning parent for one real turn, which the forecast counts. Off leaves the main-chat path unchanged |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
-| `CACHE_KEEPWARM_BAND` | `band` | `true` | Show the row above the prompt |
 
 Precedence is variable, then option, then default. A blank variable is absent; booleans read `1`, `0`, `true` or `false` in any case; `maxPokes` reads a whole number of at least 1. A bad variable or option is named in the status and the default applies, never the configured option. The log never contains a label, command or description.
 
@@ -166,7 +196,7 @@ Each sub-agent uses the same ledger arithmetic independently. Claude Code 2.1.30
 
 The budget is an admission forecast plus actual accounting, not a hard realized-spend limit: a poke is a real turn, so an admitted poke can cost more than forecast (a longer reply, more thinking, a tool call), and the episode then stops at the next check. A wait that outlasts the budget or the cap still ends in a rewrite.
 
-The band, `/keepwarm`, the log and the closing toast show the same ledger: actual spend, the allowance (write minus read saving), and `protecting`, the gross cost of the rewrite the pokes may avoid. `protecting` is hypothetical, not a realized saving. The closing net is an estimate, not a measured counterfactual: it credits one avoided rewrite minus poke spend only for a same-prefix return after the original expiry with at least 90% cache read. A return before the original expiry, or a miss, closes at minus the spend; unknown usage closes as unknown, never zero.
+`/keepwarm`, the log and the closing toast show the same ledger: actual spend, the allowance (write minus read saving), and `protecting`, the gross cost of the rewrite the pokes may avoid. `protecting` is hypothetical, not a realized saving. The closing net is an estimate, not a measured counterfactual: it credits one avoided rewrite minus poke spend only for a same-prefix return after the original expiry with at least 90% cache read. A return before the original expiry, or a miss, closes at minus the spend; unknown usage closes as unknown, never zero.
 
 ## Limits
 
@@ -193,8 +223,11 @@ npm run typecheck
 npm run validate:plugin
 npm run check:structure
 npm run release:check
+npm run live -- --lane state --cwd <trusted-dir> --output <outside-repo-path> # one short chat: v1 write, then /keepwarm off
 npm run live -- --lane wait-return --cwd <trusted-dir> --auto-effort-dir <path> --output <outside-repo-path>   # also cap, subagent-wait, ttl-1h, collision, stale; or --all
 ```
+
+`--lane state` launches exactly one short real chat with prompt suggestions disabled, reads the v1 file, checks the live Claude PID, sends `/keepwarm off`, and proves an atomic v1 replacement with `enabled: false`, `source: session`, `state: off`, and `reason: off`. It uses only this plugin directory, needs no comparison plugin, and records both snapshots outside the repository. It does not run a cache experiment or another lane.
 
 `--lane wait-return` runs a warm/control pair over a 755-second background agent: the checker requires every poke in the main transcript with its exact text and the real task id of the awaited agent, each admitted four minutes after the main request before it, each poke request and the return reading at least 90% from cache, no five-minute gap between main requests, and a control with warming off returning below 90%. `--lane cap` runs one lane with `CACHE_KEEPWARM_MAX_POKES=2` over a 900-second wait: exactly two pokes, a `poke-limit` decision and `poke limit reached 2/2` in the status, and no poke after it. `--lane subagent-wait` runs a warm/control pair: each real Haiku sub-agent owns a 420-second background shell, with `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT=0` so a small lane qualifies and the main chat's gate closed; the checker requires each poke to name the owned task, poke turns and the return to read at least 90% from cache, native admission and usage rows, and a subagents-off control returning below 20%, and records the parent wakes it observes. Lane overrides reach only the lane's own chat. The lanes leave the seat's other installed plugins enabled.
 
@@ -204,11 +237,11 @@ The unit gates (decisions, and the function-hook tests on a stand-in and on the 
 
 `CLAUDE.md` is the testing manual.
 
-The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the chat launcher `pfm`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. The band stays after a returned wait, so a capture checks that the waiting status cleared, not that every plugin name is gone.
+The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the chat launcher `pfm`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. A capture checks that the waiting status cleared.
 
 ## Credits
 
 - [claude-cache-warm](https://github.com/FiredMosquito831/claude-cache-warm) (MIT): skip a warm once the cache has expired, a minimum context, supersede by newer activity.
-- [cache-keepwarm by mupamuc](https://github.com/mupamuc/cache-keepwarm) (MIT): the row above the prompt with a toggle, the immediate `/keepwarm [on|off|status]` command, anchoring on a response that used the cache, the 15-second expiry safety, same-session restore.
+- [cache-keepwarm by mupamuc](https://github.com/mupamuc/cache-keepwarm) (MIT): the immediate `/keepwarm [on|off|status]` command, anchoring on a response that used the cache, the 15-second expiry safety, same-session restore.
 
 This plugin differs from both by keeping caches warm only while tracked work is pending, through visible pokes to the main chat and waiting sub-agents, capped per wait and under independent budgets. Their licences are in `THIRD-PARTY-NOTICES`; this plugin is MIT licensed.

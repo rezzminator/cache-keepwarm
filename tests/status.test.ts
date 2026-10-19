@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { pokeMessage, formatBand, formatLedger, formatOutcome, formatState, formatStopped, formatWaiting, type StatusView } from '../plugins/cache-keepwarm/src/status.ts';
+import { pokeMessage, formatLedger, formatOutcome, formatState, formatStopped, formatWaiting, type StatusView } from '../plugins/cache-keepwarm/src/status.ts';
 function call<T>(fn: () => T): T | string { try { return fn(); } catch (error) { return String(error); } }
 const items = [{ kind: 'agent', label: 'Audit the release notes', firstSeenAt: 0 }, { kind: 'command', label: 'npm test', firstSeenAt: 60000 }];
 test('exact waiting examples', () => {
@@ -19,7 +19,7 @@ test.each([
   [{ reason: 'small', context: 19999, minContext: 20000 }, 'not warming: context 19,999 tokens is under the 20,000 minimum'],
   [{ reason: '1h-unproven' }, 'not warming: 1h refresh unproven'],
 ] as const)('notice %#', (input, text) => expect(call(() => formatStopped(input))).toBe('cache-keepwarm · ' + text));
-test('clear, command, band and ledger share truthful values', () => {
+test('clear, command and ledger share truthful values', () => {
   expect(call(() => formatStopped(undefined))).toBeUndefined();
   const session = { spent: 700, warms: 3, episodes: 1, estimatedNet: 5000, unknown: 0 };
   const ledger = { context: 50000, ttl: '5m' as const, spent: 700, warms: 3, allowance: 57500, protecting: 62500, remaining: 56800 };
@@ -29,7 +29,6 @@ test('clear, command, band and ledger share truthful values', () => {
     const view: StatusView = { enabled: reason !== 'off', source: 'session', reason, items, now: 60000, warms: 3, nextInMs: 1000, ttl: '5m', ttlSource: 'env', context: 50000, ledger, session, lastOutcome: null };
     expect(call(() => formatState(view))).toContain(`[${reason}]`);
     expect(call(() => formatState(view))).toContain('session override');
-    expect(call(() => formatBand(view))).toMatchObject({ toggleLabel: reason === 'off' ? '[ ] keepwarm' : '[x] keepwarm' });
   }
   expect(call(() => formatOutcome({ elapsedMs: 600000, readPercent: 98, netSaved: 5000, reason: 'estimated' }))).toContain('return read 98.0% from cache · estimated net saved ≈ 5k-eq');
   expect(call(() => formatOutcome({ elapsedMs: 0, readPercent: null, netSaved: null, reason: 'unknown' }))).toContain('unknown');

@@ -183,14 +183,14 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
     project = (config / 'projects').resolve() / re.sub(r'[^a-zA-Z0-9]', '-', str(args.cwd))
     before = set(project.glob('*.jsonl'))
     prompt = directory / 'prompt.txt'
-    text = launch_subagent_text(seconds) if subagent else launch_text(seconds)
+    text = 'Reply STATE_READY only. Do not use tools.' if mode == 'state' else launch_subagent_text(seconds) if subagent else launch_text(seconds)
     if len(text.encode()) >= ARG_LIMIT:
         raise RuntimeError(f'ERROR launch prompt {len(text.encode())} bytes reaches the {ARG_LIMIT}-byte single-argument limit')
     prompt.write_text(text)
     env = dict(os.environ)
     # Claude Code's prompt suggestion sends the conversation after each turn, writing its cache (measured surviving a
     # 12-minute control wait): off, so the control lane stays cold and the warm lane's reads are the plugin's own.
-    env.update(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='false', CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)]), CACHE_KEEPWARM_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
+    env.update(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='false', CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)] if mode != 'state' else [str(ROOT / 'plugins/cache-keepwarm')]), CACHE_KEEPWARM_STATE_DIR=str(directory / 'sessions'), CACHE_KEEPWARM_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
     # A lane's own overrides (a poke cap, the sub-agent context gate) reach only its chat.
     env.update(extra_env or {})
     evidence = {'mode': mode, 'log': [], 'transcript': []}
@@ -213,6 +213,47 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
         journal = checker.Journal(transcript)
         evidence['transcript'] = journal.poll()
         checker.validity(evidence, require_debug=False)
+        if mode == 'state':
+            ready = time.monotonic() + 30
+            while not any(r.get('type') == 'assistant' and 'STATE_READY' in content(r) for r in evidence['transcript']) and time.monotonic() < ready:
+                time.sleep(.2)
+                evidence['transcript'] = journal.poll()
+                checker.validity(evidence, require_debug=False)
+            if not socket or not any(r.get('type') == 'assistant' and 'STATE_READY' in content(r) for r in evidence['transcript']):
+                raise RuntimeError('NOT RUN: state chat did not reach STATE_READY with an owned tmux target')
+            state_path = directory / 'sessions' / (transcript.stem + '.json')
+            deadline = time.monotonic() + 30
+            while not state_path.is_file() and time.monotonic() < deadline:
+                time.sleep(.2)
+            if not state_path.is_file():
+                raise RuntimeError('FAIL v1 session state not written: ' + str(state_path))
+            initial = json.loads(checker.read_text(state_path))
+            if type(initial.get('pid')) is not int or initial['pid'] <= 0:
+                raise RuntimeError('FAIL invalid Claude PID')
+            os.kill(initial['pid'], 0)
+            evidence['initialState'] = initial
+            (directory / 'initial-state.json').write_text(json.dumps(initial, indent=2))
+            typed = run(['tmux', '-L', socket, 'send-keys', '-l', '/keepwarm off'])
+            entered = run(['tmux', '-L', socket, 'send-keys', 'Enter'])
+            if typed.returncode or entered.returncode:
+                raise RuntimeError('ERROR delivering owned /keepwarm off')
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                off = json.loads(checker.read_text(state_path))
+                if off.get('enabled') is False and off.get('source') == 'session':
+                    break
+                time.sleep(.2)
+            else:
+                raise RuntimeError('FAIL /keepwarm off did not replace v1 state')
+            evidence['offState'] = off
+            evidence['sessionId'] = transcript.stem
+            evidence['pidAlive'] = True
+            (directory / 'off-state.json').write_text(json.dumps(off, indent=2))
+            evidence['stateCapture'] = capture(socket)
+            evidence['transcript'] = journal.poll()
+            evidence['debug'], evidence['debugWritten'] = debug_text(directory)
+            checker.check_state(evidence)
+            return evidence
         flush = time.monotonic() + 30
         while not any(r.get('type') == 'assistant' and 'WAITING' in content(r) for r in evidence['transcript']) and time.monotonic() < flush:
             time.sleep(1)
@@ -333,7 +374,7 @@ def warm_1h():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--lane', choices=['subagent-wait', 'wait-return', 'cap', 'ttl-1h', 'collision', 'stale'])
+    parser.add_argument('--lane', choices=['state', 'subagent-wait', 'wait-return', 'cap', 'ttl-1h', 'collision', 'stale'])
     parser.add_argument('--all', action='store_true')
     parser.add_argument('--cwd', type=Path, default=ROOT)
     parser.add_argument('--output', type=Path)
@@ -352,7 +393,7 @@ def main():
     if version.returncode or '2.1.302' not in version.stdout:
         print('ERROR need measured Claude Code 2.1.302')
         return 2
-    if not args.auto_effort_dir or not (args.auto_effort_dir / '.claude-plugin/plugin.json').is_file():
+    if args.lane != 'state' and (not args.auto_effort_dir or not (args.auto_effort_dir / '.claude-plugin/plugin.json').is_file()):
         print('ERROR need --auto-effort-dir pointing at a local plugin')
         return 2
     output = args.output or Path(tempfile.mkdtemp(prefix='cache-keepwarm-live-'))
@@ -365,7 +406,10 @@ def main():
     for mode in ['wait-return', 'cap', 'collision', 'stale'] if args.all else [args.lane]:
         try:
             directory = output / mode
-            if mode == 'subagent-wait':
+            if mode == 'state':
+                evidence = lane(args, directory, 'state')
+                print(json.dumps(checker.check_state(evidence)), flush=True)
+            elif mode == 'subagent-wait':
                 # The sub-agent alone is poked: its context gate opens, and the main chat's closes.
                 gate = {'CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT': '0', 'CACHE_KEEPWARM_MIN_CONTEXT': '100000000'}
                 # 7 minutes: one poke at 4 carries the return, inside one budget even with its parent wake; the control lapses.

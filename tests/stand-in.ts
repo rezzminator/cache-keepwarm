@@ -2,7 +2,7 @@ import type { EngineInterface, On, PluginOptions } from 'claude-code';
 import { register } from '../plugins/cache-keepwarm/hooks/cache-keepwarm.ts';
 export const pokeText = (n: string, bullets: string) => `Keep-warm poke ${n}: your prompt cache was about to expire, so this message keeps it warm while you wait on:\n${bullets}\nIf any of these is stale or was started by accident, stop it now. Otherwise reply \`waiting\` and end your turn.`;
 export class Harness {
-  now = 1792247410124; status: string | undefined; statuses: (string | undefined)[] = []; toasts: string[] = [];
+  debug: string[] = []; now = 1792247410124; status: string | undefined; statuses: (string | undefined)[] = []; toasts: string[] = [];
   handlers = new Map<string, { matcher: Record<string, unknown>; fn: Function }[]>();
   timers: { at: number; interval: number; active: boolean; fn: () => unknown }[] = [];
   messages: { role: string; text: string; toolUses: unknown[] }[] = [];
@@ -19,6 +19,7 @@ export class Harness {
       return { cancel: () => { t.active = false; } };
     };
     this.engine = {
+      plugin: { root: '/test-plugin' }, process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) },
       env: { get: async (name: string) => this.env[name] },
       clock: { now: async () => this.now, after: (ms: number, fn: () => unknown) => timer(ms, fn, 0), every: (ms: number, fn: () => unknown) => timer(ms, fn, ms) },
       prompt: { read: async () => ({ text: this.draft }), submit: async (input: any) => { this.submits.push(input); return this.submitImpl ? this.submitImpl(input) : { text: input.text }; } },
@@ -27,7 +28,7 @@ export class Harness {
       store: { get: async (key: string) => { if (this.storeError) throw this.storeError; return this.values.get(key); }, set: async (key: string, value: unknown) => { if (this.storeError) throw this.storeError; this.values.set(key, value); }, keys: async () => { if (this.storeError) throw this.storeError; return [...this.values.keys()]; }, delete: async (key: string) => { if (this.storeError) throw this.storeError; this.values.delete(key); } },
       command: { register: (value: unknown) => this.commands.push(value) },
       fs: { stat: async (path: string, options?: unknown) => { if (this.statImpl) return this.statImpl(path, options); throw new Error(`ENOENT: no such file or directory, stat '${path}'`); }, write: async (path: string, text: string) => { if (this.writeError) throw this.writeError; if (this.writeImpl) await this.writeImpl(); this.paths.push(path); this.writes.push(text); } },
-      ui: { status: (text: string | undefined) => { this.status = text; this.statuses.push(text); }, toast: (text: string) => this.toasts.push(text), invalidate: () => {}, resolve: () => ({ Box: (props: unknown, ...children: unknown[]) => ({ props, children }), Text: (props: unknown, ...children: unknown[]) => ({ props, children }), Button: (props: unknown, ...children: unknown[]) => ({ props, children }) }) },
+      ui: { log: (text: string) => this.debug.push(text), status: (text: string | undefined) => { this.status = text; this.statuses.push(text); }, toast: (text: string) => this.toasts.push(text), invalidate: () => {},  },
     } as unknown as EngineInterface;
     const on = ((event: string, ...args: unknown[]) => {
       const matcher = args.length > 1 ? args[0] as Record<string, unknown> : {};

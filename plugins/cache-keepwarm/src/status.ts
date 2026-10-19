@@ -52,8 +52,11 @@ export function formatLedger(ledger: BudgetLedger | null, session: SessionLedger
 export function formatState(view: StatusView): string {
   return `${prefix}${view.enabled ? 'on' : 'off'} (${view.source === 'launch' ? 'launch default' : 'session override'}) · ${reasons[view.reason]}${view.reason === 'poke-limit' ? limit(view.pokes) : ''} [${view.reason}] · ${view.items.length ? `${label(view.items[0])}${view.items.length > 1 ? ` +${view.items.length - 1} more` : ''} · ${duration(view.now - Math.min(...view.items.map(i => i.firstSeenAt)))} · ETA unknown` : 'no current wait'} · ${view.context ?? 'unknown'} tokens · ${formatLedger(view.ledger, view.session)}${view.lastOutcome ? ` · last: ${formatOutcome(view.lastOutcome)}` : ''}${view.warnings?.length ? ' · ' + view.warnings.join(' · ') : ''}`;
 }
-export function formatBand(view: StatusView): { text: string; state: 'warm' | 'cold' | 'off' | 'unknown'; toggleLabel: string } {
-  return { text: formatState(view), state: !view.enabled ? 'off' : view.reason === 'cache-cold' ? 'cold' : view.reason === 'eligible' ? 'warm' : 'unknown', toggleLabel: view.enabled ? '[x] keepwarm' : '[ ] keepwarm' };
+/** Public v1 session projection. No task labels or sub-agent state leave this view. */
+export function sessionState(view: StatusView, sessionId: string) {
+  const reason = view.enabled ? view.reason : 'off';
+  const state = reason === 'off' ? 'off' : ['eligible', 'in-flight'].includes(reason) && view.items.length > 0 ? 'warming' : ['poke-limit', 'budget', 'poke-failed', 'timer-failed', 'stale', 'ended'].includes(reason) ? 'stopped' : 'on';
+  return { v: 1, sessionId, updatedAt: view.now, enabled: view.enabled, source: view.source, state, reason, pokes: view.pokes ?? null, nextAt: state === 'warming' && view.nextInMs > 0 ? view.now + view.nextInMs : null, protectingTokensEq: view.ledger?.protecting ?? null };
 }
 export function formatOutcome(outcome: ClosedLedger): string {
   return `kept warm across ${duration(outcome.elapsedMs)} · return read ${outcome.readPercent === null ? 'unknown' : outcome.readPercent.toFixed(1) + '%'} from cache · estimated net saved ≈ ${outcome.netSaved === null ? 'unknown' : eq(outcome.netSaved)}`;

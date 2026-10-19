@@ -10,15 +10,15 @@ import { pickRestore, snapshotSession, sessionKey, sessionPrefix, staleKeys, typ
 import { appendLog, logFileName, logBase, leafRefusal, type LogRow, type LogStat } from '../src/log.ts';
 import { compactFacts, compactOutcome, compactResets } from '../src/compact.ts';
 import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/pokes.ts';
-import { pokeMessage, formatWaiting, formatStopped, formatState, formatBand, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
+import { pokeMessage, formatWaiting, formatStopped, formatState, sessionState, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
 type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: number; originalExpiry: number; context: number; model: string; spent: number; warms: number; epoch: number; lastPoke: number | null; failed?: string };
 /** The main chat's poke in flight: its text, the episode it serves and, once its turn started, that turn's id; `entered` once the submit
  * resolved, which Claude Code does when the poke's turn has started, so an unbound poke binds to the next main step. */
 type Poke = { text: string; episode: Episode; sessionId: string; turnId?: string; entered?: boolean };
 type WarmCharge = { a: SubState; epoch: number; at: number; text: string; wake: number; turnId?: string; episode: NonNullable<SubState['episode']>; sessionId: string; owner?: State };
-type State = { charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; rows: LogRow[]; writes: Promise<void>; stores: Promise<void>; instance: string; logPinned: string | null; logFailed: boolean; logError?: string; inactive?: boolean; ended?: EndedItem; detail?: string };
+type State = { stateDir: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; rows: LogRow[]; writes: Promise<void>; stores: Promise<void>; instance: string; logPinned: string | null; logFailed: boolean; logError?: string; inactive?: boolean; ended?: EndedItem; detail?: string };
 async function readOptionEnv($: EngineInterface) {
-  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_LOG_DIR: await $.env.get('CACHE_KEEPWARM_LOG_DIR'), CACHE_KEEPWARM_BAND: await $.env.get('CACHE_KEEPWARM_BAND') };
+  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_LOG_DIR: await $.env.get('CACHE_KEEPWARM_LOG_DIR') };
 }
 async function readTtlEnv($: EngineInterface): Promise<TtlEnv> { return { FORCE_PROMPT_CACHING_5M: await $.env.get('FORCE_PROMPT_CACHING_5M'), CLAUDE_CODE_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'), CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'), ENABLE_PROMPT_CACHING_1H: await $.env.get('ENABLE_PROMPT_CACHING_1H') }; }
 function enabled(s: State) { return effectiveEnabled(s.options.enabled, s.override); }
@@ -42,7 +42,21 @@ function paint($: EngineInterface, s: State) {
     else if (s.reason !== 'idle' && s.reason !== 'nothing-pending') text = formatStopped({ reason: 'decision', detail: s.reason, reasonCode: s.reason });
   }
   if (v.warnings?.length) text = [text, ...v.warnings].filter(Boolean).join(' · ');
-  $.ui.status(text); $.ui.invalidate('ui.render');
+  $.ui.status(text); publishState($, s);
+}
+/** Serialize immutable main-session snapshots; filesystem failures belong in the plugin debug log, never the chat. */
+function publishState($: EngineInterface, s: State, remove = false) {
+  if (!s.id || !s.stateDir) return;
+  const path = `${s.stateDir}/${s.id}.json`, data = sessionState(view(s), s.id);
+  const key = remove ? '' : JSON.stringify({ ...data, updatedAt: 0 });
+  if (!remove && s.stateLast === key) return;
+  s.stateLast = key;
+  const argv = ['node', `${$.plugin.root}/hooks/state-file.mjs`, remove ? 'delete' : 'write', s.stateDir, s.id];
+  s.stateWrites = s.stateWrites.then(async () => {
+    const updatedAt = await $.clock.now();
+    const result = await $.process.run([...argv, JSON.stringify({ ...data, updatedAt })], { timeoutMs: 10000 });
+    if (result.exitCode !== 0) throw new Error(`exit ${result.exitCode}: ${result.stderr} ${result.stdout}`);
+  }).catch(error => { s.stateLast = ''; $.ui.log(`cache-keepwarm state ${path}: ${String(error)}`, { to: 'debug' }); });
 }
 function stopTimers(s: State) { s.timer?.cancel(); s.tick?.cancel(); s.timer = undefined; s.tick = undefined; }
 /** Ends the episode. Its poke counter goes with it; a poke whose turn never started is no longer this plugin's to charge. */
@@ -50,7 +64,7 @@ function cancel($: EngineInterface, s: State, reason: ReasonCode, closing = fals
   ++s.epoch; stopTimers(s); s.nextAt = 0;
   if (closing && s.episode?.warms) s.closing ??= s.episode;
   if (s.poke && !s.poke.turnId) { s.poke.episode.pending = false; s.poke = undefined; s.inFlight = false; }
-  s.episode = null; s.pokes = null; s.reason = reason; $.ui.status(undefined); $.ui.invalidate('ui.render');
+  s.episode = null; s.pokes = null; s.reason = reason; $.ui.status(undefined); publishState($, s);
 }
 async function persist($: EngineInterface, s: State) {
   if (!s.id) return;
@@ -101,12 +115,12 @@ async function arm($: EngineInterface, s: State, epoch: number) {
   const now = await $.clock.now(); if (s.epoch !== epoch) return; s.now = now;
   const d = decision(s, epoch); s.reason = d.reason;
   queueLog($, s, 'decision');
-  if (d.action !== 'warm' || !s.anchor) { refuse($, s, d); return; }
+  if (d.action !== 'warm' || !s.anchor) { refuse($, s, d); await s.stateWrites; return; }
   s.nextAt = nextFireAt({ lastSendAt: s.anchor.at, ttl: s.ttl.ttl });
   try {
     s.timer = $.clock.after(Math.max(0, s.nextAt - s.now), () => { void fire($, s, epoch); });
     if (!s.tick) s.tick = $.clock.every(60000, () => { void refresh($, s, epoch); });
-    paint($, s);
+    paint($, s); await s.stateWrites;
   } catch (error) { s.reason = decision(s, epoch, 'timer-failed').reason; s.detail = String(error); stopTimers(s); paint($, s); await log($, s, 'stop'); }
 }
 async function refresh($: EngineInterface, s: State, epoch: number) {
@@ -131,10 +145,10 @@ async function fire($: EngineInterface, s: State, epoch: number) {
     catch (error) { if (s.epoch !== epoch) return; $.ui.toast(`cache-keepwarm · agent-list-failed (${String(error)})`); queueLog($, s, 'agent-list-failed'); }
     const now = await $.clock.now(); if (s.epoch !== epoch) return; s.now = now;
     const d = decision(s, epoch); s.reason = d.reason; queueLog($, s, 'decision');
-    if (d.action !== 'warm') { refuse($, s, d); return; }
+    if (d.action !== 'warm') { refuse($, s, d); await s.stateWrites; return; }
     const before = s.pokes; s.pokes = pokeSent(s.pokes, pokeKey(e.items.map(i => i.id)));
     const text = pokeMessage({ n: s.pokes.count, max: s.options.maxPokes, now: s.now, items: e.items.map(i => ({ ...i, firstSeenAt: s.seen.get(i.id) ?? s.now })) });
-    s.poke = { text, episode: e, sessionId: s.id }; s.inFlight = true; e.pending = true; queueLog($, s, 'admit');
+    s.poke = { text, episode: e, sessionId: s.id }; s.inFlight = true; e.pending = true; queueLog($, s, 'admit'); s.reason = 'in-flight'; paint($, s);
     // A real prompt in the main chat, framed as this plugin's message; its turn settles at `turn.complete`, which re-arms.
     let result: Awaited<ReturnType<EngineInterface['prompt']['submit']>>;
     try { result = await $.prompt.submit({ text }); }
@@ -197,9 +211,8 @@ async function armSub($: EngineInterface, s: State, a: SubState) {
   try {
     const status = await subRoster($, s, a, epoch); s.now = await $.clock.now(); if (a.epoch !== epoch) return;
     const d = subDecision(s, a, epoch, status); await logSub($, s, a, 'decision', d.reason); if (a.epoch !== epoch) return;
-    if (d.action !== 'warm' || !a.anchor) { endSub(s, a); $.ui.invalidate('ui.render'); return; }
+    if (d.action !== 'warm' || !a.anchor) { endSub(s, a); return; }
     a.timer = $.clock.after(Math.max(0, nextFireAt({ lastSendAt: a.anchor.at, ttl: a.ttl.ttl }) - s.now), () => { void fireSub($, s, a, epoch); });
-    $.ui.invalidate('ui.render');
   } catch (error) { $.ui.toast(`cache-keepwarm · sub-agent admission failed (${String(error)})`); if (a.epoch === epoch) { await logSub($, s, a, 'stop', 'inventory-unknown'); if (a.epoch === epoch) endSub(s, a); } }
 }
 async function fireSub($: EngineInterface, s: State, a: SubState, epoch: number) {
@@ -237,16 +250,17 @@ async function completeSub($: EngineInterface, s: State, a: SubState, turnId: st
   await armSub($, s, a);
 }
 
-async function toggle($: EngineInterface, s: State, on: boolean) { endSubs(s); cancel($, s, on ? 'idle' : 'off'); s.override = on; s.typing = false; await log($, s, on ? 'on' : 'cancel'); paint($, s); }
+async function toggle($: EngineInterface, s: State, on: boolean) { endSubs(s); s.override = on; cancel($, s, on ? 'idle' : 'off'); s.typing = false; s.now = await $.clock.now(); await log($, s, on ? 'on' : 'cancel'); paint($, s); await s.stateWrites; }
 export const register: Register = (on, options) => {
-  const s: State = { charges: new Map(), subagents: new Map(), options: resolveOptions(options, {}), config: options, ttlEnv: {}, ttl: { ttl: '5m', source: 'assumed' }, observed: null, anchor: null, override: null, busy: false, typing: false, epoch: 0, inFlight: false, pokes: null, episode: null, closing: null, seen: new Map(), reason: 'idle', now: 0, nextAt: 0, id: '', session: emptySessionLedger(), lastOutcome: null, rows: [], writes: Promise.resolve(), stores: Promise.resolve(), instance: crypto.randomUUID(), logPinned: null, logFailed: false };
+  const s: State = { stateDir: '', stateWrites: Promise.resolve(), stateLast: '', charges: new Map(), subagents: new Map(), options: resolveOptions(options, {}), config: options, ttlEnv: {}, ttl: { ttl: '5m', source: 'assumed' }, observed: null, anchor: null, override: null, busy: false, typing: false, epoch: 0, inFlight: false, pokes: null, episode: null, closing: null, seen: new Map(), reason: 'idle', now: 0, nextAt: 0, id: '', session: emptySessionLedger(), lastOutcome: null, rows: [], writes: Promise.resolve(), stores: Promise.resolve(), instance: crypto.randomUUID(), logPinned: null, logFailed: false };
   on('session.start', async ($, e, next) => {
     departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.override = null; s.anchor = null; s.observed = null; s.busy = false; s.typing = false; s.closing = null; s.seen.clear(); s.session = emptySessionLedger(); s.lastOutcome = null; s.rows = []; s.logFailed = false; s.logError = undefined;
     s.options = resolveOptions(options, await readOptionEnv($)); s.ttlEnv = await readTtlEnv($); s.ttl = resolveTtl(s.ttlEnv, null); s.id = await $.session.id(); s.now = await $.clock.now();
+    s.stateDir = (await $.env.get('CACHE_KEEPWARM_STATE_DIR'))?.trim() || `${(await $.env.get('XDG_STATE_HOME'))?.trim() || `${await $.env.get('HOME')}/.local/state`}/cache-keepwarm/sessions`; s.stateLast = '';
     $.command.register({ name: 'keepwarm', description: 'Control warming — /keepwarm [on|off|status] for this chat only; no argument shows state and spend.', argumentHint: '[on|off|status]', immediate: true });
     await restore($, s, true);
     if (s.options.bad.length) $.ui.toast(`cache-keepwarm · bad options: ${s.options.bad.join(', ')}`);
-    await log($, s, 'LOADED'); paint($, s); return next(e);
+    await log($, s, 'LOADED'); paint($, s); await s.stateWrites; return next(e);
   });
   on('prompt.submit', async ($, e, next) => {
     // This plugin's own poke is not activity: its turn runs, and the wait continues after it.
@@ -337,21 +351,17 @@ export const register: Register = (on, options) => {
   });
   on('classic.PostModelSwitch', async ($, e, next) => { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); await log($, s, 'model-switch'); return next(e); });
   on('session.end', async ($, e, next) => {
-    departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.closing = null; s.override = null; await persist($, s);
+    departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.closing = null; s.override = null; publishState($, s, true); await s.stateWrites; await persist($, s);
     s.anchor = null; s.seen.clear(); s.id = ''; s.session = emptySessionLedger(); s.busy = false; s.typing = false; s.lastOutcome = null; s.observed = null; s.rows = []; s.logFailed = false; s.logError = undefined; s.ttl = resolveTtl(s.ttlEnv, null);
     const result = await next(e);
     if (e.reason === 'clear' || e.reason === 'resume') {
-      s.id = result.sessionId; s.now = await $.clock.now();
+      s.id = result.sessionId; s.now = await $.clock.now(); s.stateLast = '';
       if (e.reason === 'resume') {
         await restore($, s, false);
       }
+      paint($, s); await s.stateWrites;
     }
     return result;
   });
   on('command.run', { command: 'keepwarm' }, async ($, e) => { const action = parseControl(e.args); if (action === 'invalid') return { text: 'Usage: /keepwarm [on|off|status]' }; if (action !== 'status') await toggle($, s, action === 'on'); s.now = await $.clock.now(); return { text: formatState(view(s)) + subStatus(s) }; });
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (!s.options.band || e.component !== 'AbovePrompt' || e.props.hasSurvey) return next(e);
-    s.now = await $.clock.now(); const band = formatBand(view(s)), { Box, Text, Button } = $.ui.resolve(e);
-    return Box({ flexDirection: 'row', children: [Text({ wrap: 'truncate-end', children: `${band.state === 'warm' ? '●' : '○'} ${band.text}${subStatus(s)} ` }), Button({ key: 'keepwarm', onPress: () => { void toggle($, s, !enabled(s)).catch(error => { $.ui.toast(`cache-keepwarm · toggle failed (${String(error)})`); }); }, children: band.toggleLabel })] });
-  });
 };

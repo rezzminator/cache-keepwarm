@@ -29,9 +29,12 @@ At most `maxPokes` pokes go to one thread while its pending items stay the same 
 | `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for a metadata-only decision log; empty writes none |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents, each poke also waking the parent for one turn; the main path is unchanged either way |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
-| `CACHE_KEEPWARM_BAND` | `band` | `true` | Show the row above the prompt; hiding it does not stop the pokes |
 
 A variable beats the option, the option beats the default; a blank variable is absent, booleans read `1`, `0`, `true` or `false` in any case, and a bad variable is named in the status while the default applies.
+
+## Session state JSON
+
+Main-session state is published atomically to `${XDG_STATE_HOME:-$HOME/.local/state}/cache-keepwarm/sessions/{sessionId}.json`. `CACHE_KEEPWARM_STATE_DIR` overrides that sessions directory (absolute path). The v1 record carries the Claude PID, update time, enabled/source, state/reason, poke count/cap, next due time and hypothetical protected rewrite cost; never labels, messages or sub-agent views. Node.js 20+ on Claude's PATH is required. Session end deletes the file; readers check PID liveness, never age. Failure logs the full path and error to the plugin debug log without throwing into chat. `/keepwarm on|off|status` is unchanged. The complete field contract and every reason-to-state mapping are in the [public README's Session state JSON section](https://github.com/rezzminator/cache-keepwarm#session-state-json).
 
 ## Cost and limits
 
@@ -43,6 +46,6 @@ A variable beats the option, the option beats the default; a blank variable is a
 
 ## Install
 
-The repository is public: <https://github.com/rezzminator/cache-keepwarm>. Development is on `develop`; the marketplace ref stays `main` until a release, so 0.3.0 is not yet published and the command below installs the latest released version: `/plugin install cache-keepwarm --marketplace rezzminator/cache-keepwarm`.
+The repository is public: <https://github.com/rezzminator/cache-keepwarm>. Development is on `develop`; the marketplace ref stays `main` until a release, so 0.4.0 is not yet published and the command below installs the latest released version: `/plugin install cache-keepwarm --marketplace rezzminator/cache-keepwarm`.
 
 It requires `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. A Claude Code managed by an organization skips the plugin's `classic.Stop`, `session.compact` and `classic.PostModelSwitch` hooks unless the organization lists the plugin. The root README of the repository is the full documentation, including TTL resolution, the budget ledger and every limit: <https://github.com/rezzminator/cache-keepwarm>.

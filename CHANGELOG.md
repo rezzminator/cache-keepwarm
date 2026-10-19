@@ -4,6 +4,17 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-19
+
+### Added
+
+- Atomic v1 main-session JSON for external status-line readers, under the XDG state sessions directory or `CACHE_KEEPWARM_STATE_DIR`. The public README specifies all fields, reason mappings, Claude PID liveness and session-end cleanup. Writer failures log the path and full error without interrupting chat.
+- A single-chat live `state` lane proving the v1 write and `/keepwarm off` replacement, with prompt suggestions disabled.
+
+### Removed
+
+- The in-chat band, its Box/Text/Button renderer, `band` option and `CACHE_KEEPWARM_BAND`. Migration: delete the option or variable; use the external session-state JSON and `/keepwarm on|off|status` instead. Pokes, the existing status text and command remain.
+
 ## [0.3.0] — 2026-10-19
 
 ### Changed

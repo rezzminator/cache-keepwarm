@@ -1,6 +1,6 @@
 {
   "name": "cache-keepwarm",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Protect cached context \u2014 Keep main-chat and sub-agent background waits warm with visible pokes, capped per wait, under rewrite-saving budgets.",
   "license": "MIT",
   "author": {
@@ -39,12 +39,6 @@
       "title": "Decision log directory",
       "description": "Optional directory for bounded metadata-only session JSONL logs; empty disables disk logging.",
       "default": ""
-    },
-    "band": {
-      "type": "boolean",
-      "title": "Show the row above the prompt",
-      "description": "Show cache state, wait reason, savings ledger and the session-local keepwarm toggle. Hiding it does not disable warming.",
-      "default": true
     },
     "subagents": {
       "type": "boolean",
