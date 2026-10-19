@@ -7,14 +7,14 @@
   "plugins": [
     {
       "name": "cache-keepwarm",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/rezzminator/cache-keepwarm.git",
         "path": "plugins/cache-keepwarm",
         "ref": "main"
       },
-      "description": "Protect cached context \u2014 Warm main-chat background waits invisibly and waiting sub-agents with short real turns, under independent rewrite-saving budgets.",
+      "description": "Protect cached context \u2014 Keep main-chat and sub-agent background waits warm with visible pokes, capped per wait, under rewrite-saving budgets.",
       "homepage": "https://github.com/rezzminator/cache-keepwarm",
       "license": "MIT",
       "keywords": [
@@ -26,5 +26,5 @@
       ]
     }
   ],
-  "description": "Wait-aware invisible prompt-cache warming for Claude Code."
+  "description": "Wait-aware prompt-cache keep-warm pokes for Claude Code."
 }

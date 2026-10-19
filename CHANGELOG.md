@@ -4,6 +4,27 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-19
+
+### Changed
+
+- The main chat is kept warm by a visible poke: a real prompt submitted into the chat through `$.prompt.submit`, shown in the transcript and answered by one real turn at the chat's model and effort. It replaces the invisible `$.model.fork` replay, which is removed with its rewrite accounting (`entryAfterWarm`, `entryTtl`, the `rewrite` log row) and its sub-agent-lifetime timing. It is still never sent while a turn runs or the user is typing.
+- One poke message for the main chat and sub-agents: `Keep-warm poke {n}/{N}`, one bullet per pending item with its kind, real task id, sanitized label and elapsed time, asking the model to stop anything stale or started by accident, else to reply `waiting`. The sub-agent "no tool call" instruction is gone: a poked model may stop the work.
+- The budget forecast of a poke is the thread's previous poke's actual cost, floored at the context read, the unwritten tail and the poke written and a 1,000-token reply; a sub-agent poke adds its parent wake (parent context × 0.1 + (150 + 1000) × 2 + 1000 × 5). Actual usage is charged once, from the poke turn's own usage.
+- `subagents` defaults to `true`. Each sub-agent poke makes Claude Code hand the spawning parent an interim task-notification, one real parent turn per poke; the forecast counts it and no notification is filtered.
+- Log rows: the main chat's charged poke is a `poke` row (was `fork`), and every row carries its wait's `pokes` count and cap.
+
+### Added
+
+- `maxPokes` (default 4, an integer of at least 1) and `CACHE_KEEPWARM_MAX_POKES`: the most pokes one thread, the main chat or one sub-agent, gets while its sorted set of pending ids is unchanged and nothing else happens. A user prompt, a real turn, an item finishing or a new item appearing starts a fresh count; a poke and its own reply do not. A reached cap reads `poke limit reached {n}/{N}` in the status, `/keepwarm` and the log (`poke-limit`), and a later different wait gets its own pokes. Counts are in memory per thread.
+- `subagentMinContext` (default 100000) and `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT`: the smallest sub-agent context worth a poke and its parent wake; `minContext` (20000) stays the main chat's.
+- A live `cap` lane (`--lane cap`, part of `--all`): a cap of 2 over a wait long enough for 3 pokes.
+
+### Removed
+
+- `maxWaitMinutes` and `CACHE_KEEPWARM_MAX_WAIT_MINUTES`, with the lease reason codes: the poke cap supersedes them. Migration: delete the option or variable; set `maxPokes` to bound a long wait instead (at the 4-minute cadence, 4 pokes cover about 20 minutes of one unchanged wait).
+- The `lease` lane of the live `stale` mode, which only proved the removed lease; `stale` keeps its killed-work lane.
+
 ## [0.2.0] — 2026-10-18
 
 ### Added

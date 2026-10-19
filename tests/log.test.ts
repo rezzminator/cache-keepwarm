@@ -10,6 +10,10 @@ test('bounded metadata buffer excludes arbitrary producer secrets', () => {
   expect(JSON.stringify(rows)).not.toContain('sk-test-123');
   expect(rows.at(-1)).toEqual({ at: 1, event: 'decision', epoch: 0, items: [{ id: 'a', kind: 'agent' }], ttl: '5m', ttlSource: 'assumed', context: 50000, spent: 0, reason: 'eligible' });
 });
+test('a row keeps the poke count of its wait, so a reached limit reads in the log', () => {
+  const row = { at: 1, event: 'decision', epoch: 0, items: [], ttl: '5m', ttlSource: 'assumed', context: 50000, spent: 0, reason: 'poke-limit', pokes: { count: 4, max: 4, extra: 1 }, stray: '5m' } as unknown as LogRow;
+  expect(appendLog([], row).at(-1)).toEqual({ at: 1, event: 'decision', epoch: 0, items: [], ttl: '5m', ttlSource: 'assumed', context: 50000, spent: 0, reason: 'poke-limit', pokes: { count: 4, max: 4 } });
+});
 test('log file names carry the encoded session and this process instance', () => {
   let actual: unknown; try { actual = logFileName('a/b c', 'f00d'); } catch (error) { actual = String(error); }
   expect(actual).toBe('a%2Fb%20c.f00d.jsonl');

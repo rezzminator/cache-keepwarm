@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { warmReceipt, ownedFromTool, firstSeen, fromStop, leaseExpired, reconcile, sanitizeLabel, type TaskSummary } from '../plugins/cache-keepwarm/src/waits.ts';
+import { warmReceipt, ownedFromTool, firstSeen, fromStop, reconcile, sanitizeLabel, type TaskSummary } from '../plugins/cache-keepwarm/src/waits.ts';
 function call<T>(fn: () => T): T | string { try { return fn(); } catch (error) { return String(error); } }
 test('snapshot forms and sanitized producer labels', () => {
   const tasks = [
@@ -21,7 +21,7 @@ test('snapshot forms and sanitized producer labels', () => {
   expect(call(() => sanitizeLabel('a\u0007b\n\n  c' + 'x'.repeat(60)))).toBe('ab cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…');
   expect(call(() => sanitizeLabel('\u001b[31mred\u001b[0m'))).toBe('[31mred[0m');
 });
-test('terminal refinement and independent earliest leases', () => {
+test('terminal refinement and independent first-seen times', () => {
   const items = [{ id: 'a', kind: 'agent', label: 'X' }, { id: 'b', kind: 'command', label: 'Y' }];
   for (const status of ['killed', 'completed', 'failed'] as const) {
     expect(call(() => reconcile(items, [{ id: 'a', status }]))).toEqual({ items: [items[1]], ended: [{ item: items[0], ended: status }] });
@@ -31,8 +31,6 @@ test('terminal refinement and independent earliest leases', () => {
   for (const status of ['idle', undefined] as const) expect(reconcile(items, status ? [{ id: 'a', status }] : [], true).items).toEqual([items[1]]);
   for (const status of ['pending', 'running', 'waiting'] as const) expect(reconcile(items, [{ id: 'a', status }], true).items).toEqual(items);
   expect(call(() => firstSeen(items, new Map([['a', 1], ['gone', 2]]), 3))).toEqual(new Map([['a', 1], ['b', 3]]));
-  expect(call(() => leaseExpired({ firstSeenAt: 1792247410124, maxWaitMinutes: 180, now: 1792258210124 }))).toBe(true);
-  expect(call(() => leaseExpired({ firstSeenAt: 1792247410124, maxWaitMinutes: 180, now: 1792258210123 }))).toBe(false);
 });
 
 test.each([
@@ -46,8 +44,8 @@ test.each([
   ['Agent', {}, { status: 'completed', agentId: 'done' }, null], ['Bash', {}, null, null],
 ] as const)('owned background producer %#', (tool, input, result, expected) => expect(ownedFromTool(tool, input, result)).toEqual(expected));
 
-test.each(['raw', 'wrapped', 'foreign', 'tools', 'empty'])('warm receipt %s uses a local expected send, not claimed plugin origin', kind => {
-  const expected = 'Cache keep-warm: fixed';
+test.each(['raw', 'wrapped', 'foreign', 'tools', 'empty'])('poke receipt %s uses a local expected send, not claimed plugin origin; tools may follow it', kind => {
+  const expected = 'Keep-warm poke 1/4: fixed';
   const messages = kind === 'empty' ? [] : [{ role: 'user', text: kind === 'wrapped' ? `The coordinator sent a message while you were working:\n${expected}\n\nAddress this before completing your current task.` : expected, toolUses: [] }, ...(kind === 'foreign' ? [{ role: 'user', text: 'Changed', toolUses: [] }] : []), { role: 'assistant', text: 'K', toolUses: kind === 'tools' ? [{}] : [] }];
-  expect(warmReceipt(messages, expected)).toEqual({ own: !['foreign', 'empty'].includes(kind), tools: kind === 'tools' });
+  expect(warmReceipt(messages, expected)).toEqual({ own: !['foreign', 'empty'].includes(kind) });
 });

@@ -7,7 +7,11 @@ export interface SessionLedger { spent: number; warms: number; episodes: number;
 const rounded = (n: number): number => Math.round(n * 1e6) / 1e6;
 export function rewriteSaved({ context, ttl }: { context: number; ttl: Ttl }): number { return rounded(context * (ttl === '5m' ? 1.15 : 1.9)); }
 export function warmSpend(usage: Usage): number { return rounded(usage.cache_read_input_tokens * 0.1 + usage.cache_creation_input_tokens * 2 + usage.input_tokens + usage.output_tokens * 5); }
-export function warmForecast({ context, tail, output = 256 }: { context: number; tail: number; output?: number }): number { return rounded(context * 0.1 + tail * 2 + 64 + Math.max(256, output) * 5); }
+/** A poke is a real turn at the thread's own effort, thinking included: the observed spend of this thread's previous poke, never under a
+ * conservative floor — the context read, the unwritten tail plus the poke (150) written, and a 1,000-token reply. */
+export function pokeForecast({ context, tail, previous }: { context: number; tail: number; previous: number | null }): number { return rounded(Math.max(context * 0.1 + (tail + 150) * 2 + 1000 * 5, previous ?? 0)); }
+/** A sub-agent poke also wakes its parent: Claude Code hands the parent an interim notification, one real parent turn per poke. */
+export function wakeForecast({ parentContext }: { parentContext: number }): number { return rounded(parentContext * 0.1 + (150 + 1000) * 2 + 1000 * 5); }
 export function allow({ spent, forecast, saved }: { spent: number; forecast: number; saved: number }): boolean { return [spent, forecast, saved].every(n => Number.isFinite(n) && n >= 0) && spent + forecast <= saved; }
 export function budgetLedger({ context, ttl, spent, warms }: { context: number; ttl: Ttl; spent: number; warms: number }): BudgetLedger {
   const allowance = rewriteSaved({ context, ttl });

@@ -32,9 +32,6 @@ export function reconcile(items: readonly WaitItem[], agents: readonly Pick<Agen
 export function firstSeen(items: readonly WaitItem[], previous: ReadonlyMap<string, number>, now: number): Map<string, number> {
   return new Map(items.map(item => [item.id, Math.min(previous.get(item.id) ?? now, now)]));
 }
-export function leaseExpired({ firstSeenAt, maxWaitMinutes, now }: { firstSeenAt: number; maxWaitMinutes: number; now: number }): boolean {
-  return now - firstSeenAt >= maxWaitMinutes * 60000;
-}
 
 export function ownedFromTool(tool: string, input: Record<string, unknown>, result: unknown): WaitItem | null {
   if (!result || typeof result !== 'object') return null;
@@ -50,10 +47,11 @@ export function ownedFromTool(tool: string, input: Record<string, unknown>, resu
   return typeof id === 'string' && id.length > 0 ? { id, kind, label: sanitizeLabel(typeof label === 'string' ? label : 'your background work') } : null;
 }
 
-export function warmReceipt(messages: readonly { role: string; text: string; toolUses: readonly unknown[] }[], expected: string): { own: boolean; tools: boolean } {
+/** Whether the last user message is this plugin's own poke, raw or as Claude Code wraps a coordinator send; tools may follow it. */
+export function warmReceipt(messages: readonly { role: string; text: string; toolUses: readonly unknown[] }[], expected: string): { own: boolean } {
   const index = messages.findLastIndex(m => m.role === 'user');
-  if (index < 0) return { own: false, tools: false };
+  if (index < 0) return { own: false };
   const text = messages[index]!.text;
   const wrapped = `The coordinator sent a message while you were working:\n${expected}\n\nAddress this before completing your current task.`;
-  return { own: text === expected || text === wrapped, tools: messages.slice(index + 1).some(m => m.toolUses.length > 0) };
+  return { own: text === expected || text === wrapped };
 }

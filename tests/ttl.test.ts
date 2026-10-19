@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { entryAfterWarm, observeTtl, resolveTtl, warmWriteTtl } from '../plugins/cache-keepwarm/src/ttl.ts';
+import { observeTtl, resolveTtl, subagentTtl } from '../plugins/cache-keepwarm/src/ttl.ts';
 test.each([
   [{ FORCE_PROMPT_CACHING_5M: '1', CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }, '1h', { ttl: '5m', source: 'force-5m' }],
   [{ CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }, '5m', { ttl: '1h', source: 'env' }],
@@ -15,17 +15,8 @@ test.each([
   [{ CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '1h' }, { ttl: '1h', source: 'env' }], [{ ENABLE_PROMPT_CACHING_1H: '1' }, { ttl: '1h', source: 'env-1h' }],
   [{ FORCE_PROMPT_CACHING_5M: '1', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '1h' }, { ttl: '5m', source: 'force-5m' }],
   [{ CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: 'bad', ENABLE_PROMPT_CACHING_1H: '1' }, { ttl: '1h', source: 'env-1h' }],
-] as const)('a warm writes at the sub-agent TTL, never the chat\'s %#', (env, expected) => {
-  let actual: unknown; try { actual = warmWriteTtl(env); } catch (error) { actual = String(error); }
-  expect(actual).toEqual(expected);
-});
-test.each([
-  [56055, 56057, {}, { rewritten: false }], [34643, 56026, {}, { rewritten: true, ttl: { ttl: '5m', source: 'assumed' } }],
-  [34643, 56026, { CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '1h' }, { rewritten: true, ttl: { ttl: '1h', source: 'env' } }],
-  [0, 50000, {}, { rewritten: true, ttl: { ttl: '5m', source: 'assumed' } }], [NaN, 50000, {}, { rewritten: true, ttl: { ttl: '5m', source: 'assumed' } }],
-  [45000, 50000, {}, { rewritten: false }], [44999, 50000, {}, { rewritten: true, ttl: { ttl: '5m', source: 'assumed' } }],
-] as const)('a warm reading %s of %s refreshed the entry or rewrote it at its own TTL', (read, context, env, expected) => {
-  let actual: unknown; try { actual = entryAfterWarm({ read, context, env }); } catch (error) { actual = String(error); }
+] as const)('a sub-agent request writes at the sub-agent TTL, never the chat\'s %#', (env, expected) => {
+  let actual: unknown; try { actual = subagentTtl(env); } catch (error) { actual = String(error); }
   expect(actual).toEqual(expected);
 });
 test.each([

@@ -1,7 +1,7 @@
 {
   "name": "cache-keepwarm",
-  "version": "0.2.0",
-  "description": "Protect cached context \u2014 Warm main-chat background waits invisibly and waiting sub-agents with short real turns, under independent rewrite-saving budgets.",
+  "version": "0.3.0",
+  "description": "Protect cached context \u2014 Keep main-chat and sub-agent background waits warm with visible pokes, capped per wait, under rewrite-saving budgets.",
   "license": "MIT",
   "author": {
     "name": "rezzminator",
@@ -19,20 +19,20 @@
     "enabled": {
       "type": "boolean",
       "title": "Keep tracked waits warm",
-      "description": "Warm only qualifying main-chat background waits. The launch default; /keepwarm on or off overrides it for this session.",
+      "description": "Keep qualifying background waits warm with visible pokes. The launch default; /keepwarm on or off overrides it for this session.",
       "default": true
     },
     "minContext": {
       "type": "number",
       "title": "Minimum context tokens",
-      "description": "Do not warm a smaller context; its rewrite is cheap.",
+      "description": "Do not poke a main chat with a smaller context; its rewrite is cheap.",
       "default": 20000
     },
-    "maxWaitMinutes": {
+    "maxPokes": {
       "type": "number",
-      "title": "Waiting-item lease in minutes",
-      "description": "Stop counting an item as a reason to warm after this many minutes pending; its liveness remains unknown.",
-      "default": 180
+      "title": "Pokes per wait",
+      "description": "Send at most this many keep-warm pokes to one thread while its pending items stay the same and nothing else happens; any real activity or a changed set of items starts a fresh count.",
+      "default": 4
     },
     "logDir": {
       "type": "string",
@@ -48,9 +48,15 @@
     },
     "subagents": {
       "type": "boolean",
-      "title": "Warm waiting sub-agents",
-      "description": "Opt in to real warm turns for waiting sub-agents with attributable pending work. Each warm may also wake its parent and incur a separate, unbudgeted parent request.",
-      "default": false
+      "title": "Poke waiting sub-agents",
+      "description": "Poke waiting sub-agents that own attributable pending work. Each sub-agent poke also wakes its parent for one real turn, which the budget forecast counts.",
+      "default": true
+    },
+    "subagentMinContext": {
+      "type": "number",
+      "title": "Minimum sub-agent context tokens",
+      "description": "Do not poke a sub-agent with a smaller context; with the parent wake, a smaller rewrite is not worth saving.",
+      "default": 100000
     }
   }
 }

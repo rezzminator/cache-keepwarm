@@ -1,13 +1,11 @@
 import { expect, test } from 'vitest';
-import { allow, budgetLedger, closeLedger, emptySessionLedger, recordOutcome, recordWarm, rewriteSaved, warmForecast, warmSpend } from '../plugins/cache-keepwarm/src/budget.ts';
+import { allow, budgetLedger, closeLedger, emptySessionLedger, recordOutcome, recordWarm, rewriteSaved, pokeForecast, wakeForecast, warmSpend } from '../plugins/cache-keepwarm/src/budget.ts';
 function call<T>(fn: () => T): T | string { try { return fn(); } catch (error) { return String(error); } }
 const usage = { input_tokens: 25, output_tokens: 3, cache_read_input_tokens: 49745, cache_creation_input_tokens: 807 };
 test('exact budget examples and inclusive admission', () => {
   expect(call(() => rewriteSaved({ context: 50552, ttl: '5m' }))).toBe(58134.8);
   expect(call(() => rewriteSaved({ context: 50552, ttl: '1h' }))).toBe(96048.8);
   expect(call(() => warmSpend(usage))).toBe(6628.5);
-  expect(call(() => warmForecast({ context: 50552, tail: 807 }))).toBe(8013.2);
-  expect(call(() => warmForecast({ context: 50552, tail: 0 }))).toBe(6399.2);
   expect(call(() => allow({ spent: 0, forecast: 8013.2, saved: 58134.8 }))).toBe(true);
   expect(call(() => allow({ spent: 52485.3, forecast: 6399.2, saved: 58134.8 }))).toBe(false);
   expect(call(() => allow({ spent: 1, forecast: 2, saved: 3 }))).toBe(true);
@@ -34,4 +32,15 @@ test('unsettled spend never becomes a realized saving estimate', () => {
   expect(closeLedger({ ledger, waitStartedAt: 0, originalExpiryAt: 300000, returnedAt: 400000, samePrefix: true, usage: { input_tokens: 100, output_tokens: 2, cache_read_input_tokens: 49000, cache_creation_input_tokens: 900 }, settled: false } as Parameters<typeof closeLedger>[0])).toMatchObject({ readPercent: 98, netSaved: null, reason: 'unknown' });
 });
 
-test('observed thinking output raises the next forecast', () => expect(warmForecast({ context: 50000, tail: 0, output: 10000 } as any)).toBe(55064));
+test('a first poke forecasts the conservative floor: read, written tail and poke, a thinking-sized reply', () => {
+  expect(call(() => pokeForecast({ context: 50552, tail: 807, previous: null }))).toBe(11969.2);
+  expect(call(() => pokeForecast({ context: 50000, tail: 0, previous: null }))).toBe(10300);
+});
+test('a later poke forecasts the observed spend of this thread\'s previous poke, never under the floor', () => {
+  expect(call(() => pokeForecast({ context: 50000, tail: 3, previous: 55064 }))).toBe(55064);
+  expect(call(() => pokeForecast({ context: 50000, tail: 3, previous: 6628.5 }))).toBe(10306);
+});
+test('a sub-agent poke adds the parent wake: its context read, notification and tail written, a reply', () => {
+  expect(call(() => wakeForecast({ parentContext: 80000 }))).toBe(15300);
+  expect(call(() => wakeForecast({ parentContext: 0 }))).toBe(7300);
+});

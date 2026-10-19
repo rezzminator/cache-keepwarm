@@ -1,17 +1,16 @@
 import type { EngineInterface, On, PluginOptions } from 'claude-code';
 import { register } from '../plugins/cache-keepwarm/hooks/cache-keepwarm.ts';
+export const pokeText = (n: string, bullets: string) => `Keep-warm poke ${n}: your prompt cache was about to expire, so this message keeps it warm while you wait on:\n${bullets}\nIf any of these is stale or was started by accident, stop it now. Otherwise reply \`waiting\` and end your turn.`;
 export class Harness {
   now = 1792247410124; status: string | undefined; statuses: (string | undefined)[] = []; toasts: string[] = [];
   handlers = new Map<string, { matcher: Record<string, unknown>; fn: Function }[]>();
   timers: { at: number; interval: number; active: boolean; fn: () => unknown }[] = [];
   messages: { role: string; text: string; toolUses: unknown[] }[] = [];
   sends: { to: { agentId: string }; text: string }[] = []; sendImpl: ((input: any) => Promise<any>) | null = null;
-  forks: unknown[] = []; lists = 0; writes: string[] = []; paths: string[] = []; statImpl: ((path: string, options?: unknown) => Promise<unknown>) | null = null; values = new Map<string, unknown>(); commands: unknown[] = [];
+  submits: { text: string; asUser?: true }[] = []; submitImpl: ((input: any) => Promise<any>) | null = null; lists = 0; writes: string[] = []; paths: string[] = []; statImpl: ((path: string, options?: unknown) => Promise<unknown>) | null = null; values = new Map<string, unknown>(); commands: unknown[] = [];
   draft = ''; id = 'session-1'; env: Record<string, string> = {}; loadError: unknown;
   agents = [{ id: 'a', status: 'waiting' }]; writeError: Error | null = null; writeImpl: (() => Promise<void>) | null = null; storeError: Error | null = null;
-  forkResult: unknown = { isAnswered: true, text: 'K', usage: { input_tokens: 25, output_tokens: 3, cache_read_input_tokens: 49745, cache_creation_input_tokens: 807 } };
-  notifyFork!: () => void; forkStarted = new Promise<void>(resolve => { this.notifyFork = resolve; });
-  forkImpl: (() => Promise<unknown>) | null = null;
+  pokeUsage = { input_tokens: 25, output_tokens: 3, cache_read_input_tokens: 49745, cache_creation_input_tokens: 807, model: 'claude-haiku-5-5' };
   engine: EngineInterface;
   constructor(options: PluginOptions = {}, env: Record<string, string> = {}) {
     this.env = env;
@@ -22,10 +21,9 @@ export class Harness {
     this.engine = {
       env: { get: async (name: string) => this.env[name] },
       clock: { now: async () => this.now, after: (ms: number, fn: () => unknown) => timer(ms, fn, 0), every: (ms: number, fn: () => unknown) => timer(ms, fn, ms) },
-      prompt: { read: async () => ({ text: this.draft }) },
+      prompt: { read: async () => ({ text: this.draft }), submit: async (input: any) => { this.submits.push(input); return this.submitImpl ? this.submitImpl(input) : { text: input.text }; } },
       session: { id: async () => this.id, messages: async () => this.messages, send: async (input: any) => { this.sends.push(input); return this.sendImpl ? this.sendImpl(input) : { isDelivered: true }; } },
       agent: { list: async () => { this.lists++; return this.agents; } },
-      model: { fork: async (input: unknown) => { this.forks.push(input); this.notifyFork(); if (this.forkImpl) return this.forkImpl(); if (this.forkResult instanceof Error) throw this.forkResult; return this.forkResult; } },
       store: { get: async (key: string) => { if (this.storeError) throw this.storeError; return this.values.get(key); }, set: async (key: string, value: unknown) => { if (this.storeError) throw this.storeError; this.values.set(key, value); }, keys: async () => { if (this.storeError) throw this.storeError; return [...this.values.keys()]; }, delete: async (key: string) => { if (this.storeError) throw this.storeError; this.values.delete(key); } },
       command: { register: (value: unknown) => this.commands.push(value) },
       fs: { stat: async (path: string, options?: unknown) => { if (this.statImpl) return this.statImpl(path, options); throw new Error(`ENOENT: no such file or directory, stat '${path}'`); }, write: async (path: string, text: string) => { if (this.writeError) throw this.writeError; if (this.writeImpl) await this.writeImpl(); this.paths.push(path); this.writes.push(text); } },
@@ -56,20 +54,28 @@ export class Harness {
   }
   async start() { await this.emit('session.start', { cwd: '.', surface: 'terminal', isInteractive: true }); }
   async stop(tasks: unknown = [{ id: 'a', type: 'subagent', status: 'running', description: 'Audit sk-test-123' }]) { return this.emit('classic.Stop', { background_tasks: tasks }); }
-  async agentWait(id = 'sub', own = true) {
+  async agentWait(id = 'sub', own = true, read?: number) {
     this.agents.push({ id, status: 'waiting' }); await this.emit('turn.start', { agentId: id, turnId: id, text: 'Do work' });
-    await this.step(undefined, id, id);
+    await this.step(read ? { input_tokens: 2, output_tokens: 807, cache_read_input_tokens: read, cache_creation_input_tokens: 793, model: 'claude-haiku-5-5' } : undefined, id, id);
     if (own) await this.emit('tool.call', { agentId: id, tool: 'Bash', command: 'sleep 540', run_in_background: true, tool_use_id: 'tool-' + id }, { result: { backgroundTaskId: 'work-' + id } });
     await this.emit('classic.SubagentStop', { agent_id: id, background_tasks: [{ id: 'work-' + id, type: 'shell', status: 'running', description: 'Work', command: 'sleep 540' }] });
     await this.emit('turn.complete', { agentId: id, turnId: id, reason: 'answer', durationMs: 100, answer: 'WAITING' });
   }
   async warmReply(output = 3, id = 'sub') {
-    const text = this.sends.find(s => s.to.agentId === id)!.text;
+    const text = this.sends.findLast(s => s.to.agentId === id)!.text;
     await this.emit('turn.start', { agentId: id, turnId: 'warm-' + id, text });
     await this.emit('session.receive', { agentId: id, text, origin: { kind: 'coordinator', plugin: 'cache-keepwarm' } });
     const usage = { input_tokens: 25, output_tokens: output, cache_read_input_tokens: 49745, cache_creation_input_tokens: 807, model: 'claude-haiku-5-5' };
     await this.step(usage, id, 'warm-' + id);
     await this.emit('turn.complete', { agentId: id, turnId: 'warm-' + id, reason: 'answer', durationMs: 100, usage, answer: 'K' });
+  }
+  /** The main chat's visible poke turn as Claude Code runs it: the plugin's submit, the turn, its Stop and its completion. */
+  async pokeReply({ usage = this.pokeUsage as any, tasks = undefined as unknown, reason = 'answer', order = 'stop-first', hook = true } = {}) {
+    const text = this.submits.at(-1)!.text, turnId = 'poke-' + this.submits.length;
+    if (hook) await this.emit('prompt.submit', { text, origin: { kind: 'plugin', name: 'cache-keepwarm' } });
+    await this.emit('turn.start', { turnId, text }); await this.step(usage ?? this.pokeUsage, undefined, turnId);
+    const complete = () => this.emit('turn.complete', { turnId, reason, durationMs: 100, ...(usage ? { usage } : {}), answer: 'waiting' });
+    if (order === 'complete-first') { await complete(); await this.stop(tasks); } else { await this.stop(tasks); await complete(); }
   }
   async arm() { await this.start(); await this.step(); await this.stop(); }
   async advance(ms: number) {

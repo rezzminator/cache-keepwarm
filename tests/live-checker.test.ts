@@ -3,12 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath, URL } from 'node:url';
-const script = fileURLToPath(new URL('../scripts/live-check.py', import.meta.url));
+import { script, requests, usage, message, poke, mainLane, pair, checkPair, python } from './live-fixtures.ts';
 test.each([
   [{ lanes: [{ transcript: [{ message: { model: '<synthetic>' } }], trustBlocked: true }] }, 'VOID API/auth'],
   [{ lanes: [{ debug: '[ERROR] API authentication failed' }] }, 'VOID API/auth'],
-  [{ lanes: [{ log: [{ event: 'fork.api-error' }] }] }, 'VOID API/auth'],
+  [{ lanes: [{ transcript: [{ isApiErrorMessage: true }] }] }, 'VOID API/auth'],
   [{ lanes: [{ trustBlocked: true }] }, 'BLOCKED folder trust'],
   [{ lanes: [{}] }, 'ERROR need plugin load marker'],
 ])('live validity is not cache absence %#', (input, text) => {
@@ -19,43 +18,30 @@ test.each([
     expect(result.status).toBe(2); expect(result.stdout).toContain(text);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
-const requests = () => [{ type: 'api-request', querySource: 'repl_main_thread', id: 'r1', keep: 0, tail: ['a', 'b'] },
-  { type: 'api-request', querySource: 'repl_main_thread', id: 'r2', base: 'r1', keep: 2, tail: ['c', 'd'] },
-  { type: 'api-request', querySource: 'repl_main_thread', id: 'r3', base: 'r2', keep: 4, tail: ['e'] }];
-function pair() {
-  const at = 1000000;
-  const usage = (read: number) => ({ input_tokens: 1000, output_tokens: 3, cache_read_input_tokens: read, cache_creation_input_tokens: 49000 - read });
-  const message = (text: string, type = 'assistant', read = 49000) => ({ type, timestamp: new Date(at + (text === 'WAITING' ? 1000 : 756000)).toISOString(), message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text }], usage: usage(read) } });
-  const lane = (warm: boolean) => ({ transcriptPath: 'transcript.jsonl', debug: '', effort: [], waitingCapture: 'cache-keepwarm · waiting on agent', returnedCapture: 'finished',
-    transcript: [message('WAITING'), message('<task-notification>LONG_PROBE_DONE</task-notification>', 'user'), message('RETURNED', 'assistant', warm ? 49000 : 20000), ...requests()],
-    log: [{ event: 'LOADED', at, epoch: 0 }, { event: 'step', at, anchorAt: at, epoch: 1 }, ...(warm ? [240000, 480000, 720000].flatMap(delta => [{ event: 'admit', at: at + delta, epoch: 2 }, { event: 'fork', at: at + delta, epoch: 2, context: 50000, usage: usage(49000) }]) : [])] });
-  return { lanes: [lane(true), lane(false)] };
-}
-function checkPair(input: unknown) {
-  const dir = mkdtempSync(join(tmpdir(), 'cache-keepwarm-pair-'));
-  try { const path = join(dir, 'pair.json'); writeFileSync(path, JSON.stringify(input)); return spawnSync('python3', ['-I', script, path], { encoding: 'utf8' }); }
-  finally { rmSync(dir, { recursive: true, force: true }); }
-}
 test('independent complete evidence is accepted', () => expect(checkPair(pair()).status).toBe(0));
-test.each(['wrong-time', 'missing-fork', 'extra-turn', 'effort-step', 'missing-capture', 'missing-debug'])('mechanism evidence rejects %s', problem => {
+test.each(['wrong-time', 'missing-poke', 'extra-turn', 'effort-step', 'missing-capture', 'missing-debug', 'poke-text', 'wrong-id', 'cold-poke', 'control-poke', 'lapse'])('mechanism evidence rejects %s', problem => {
   const input: any = pair(), warm = input.lanes[0];
   if (problem === 'wrong-time') warm.log.find((r: any) => r.event === 'admit').at += 10000;
-  if (problem === 'missing-fork') warm.log = warm.log.filter((r: any) => r.at !== 1240000);
+  if (problem === 'missing-poke') warm.log = warm.log.filter((r: any) => !(r.event === 'poke' && r.pokes.count === 2));
+  if (problem === 'poke-text') warm.transcript[1].message.content[0].text = warm.transcript[1].message.content[0].text.replace('stop it now', 'leave it');
+  if (problem === 'wrong-id') warm.transcript[3].message.content[0].text = warm.transcript[3].message.content[0].text.replace('task1', 'other');
+  if (problem === 'cold-poke') warm.log.find((r: any) => r.event === 'poke').usage = usage(0);
+  if (problem === 'control-poke') input.lanes[1].transcript.splice(1, 0, warm.transcript[1], warm.transcript[2]);
+  if (problem === 'lapse') input.lanes[0] = mainLane(1);
   if (problem === 'extra-turn') warm.transcript.splice(1, 0, { type: 'assistant', message: { content: [{ text: 'extra request' }] } });
   if (problem === 'effort-step') warm.effort = [{ event: 'turn', ts: 1001010, turnId: 'w' }, { event: 'step', ts: 1100000, turnId: 'x' }];
   if (problem === 'missing-capture') delete warm.returnedCapture;
   if (problem === 'missing-debug') delete warm.debug;
   expect(checkPair(input).status).toBe(2);
 });
-const runner = fileURLToPath(new URL('../scripts/live-proof.py', import.meta.url));
-function python(body: string) {
-  return spawnSync('python3', ['-I', '-B', '-c', `import importlib.util,sys,json,subprocess,tempfile,pathlib,types
-spec=importlib.util.spec_from_file_location('runner',sys.argv[1]); m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-${body}`, runner], { encoding: 'utf8', timeout: 5000 });
-}
+test('auto-effort stepping inside a poke turn is the poke\'s own, not wait-time work', () => {
+  const input: any = pair();
+  input.lanes[0].effort = [{ event: 'turn', ts: 1001010, turnId: 'w' }, { event: 'step', ts: 1242000, turnId: 'p1' }];
+  expect(checkPair(input).status, checkPair(input).stdout).toBe(0);
+});
 test('collision checker rejects a stale post-cancel admission', () => {
   const result = python(`before={'transcript':[{'type':'assistant','at':0,'message':{'content':'WAITING'}},{'type':'assistant','at':201000,'message':{'content':'PONG'}}], 'debug':'', 'log':[{'event':'LOADED'}, {'event':'cancel','at':200000,'epoch':2}, {'event':'admit','at':440000,'epoch':3}]}
-during={'transcript':[], 'debug':'', 'log':[{'event':'LOADED'},{'event':'admit','at':239000,'epoch':3},{'event':'cancel','at':240000,'epoch':4},{'event':'admit','at':242000,'epoch':3},{'event':'fork','at':242500,'epoch':3}]}
+during={'transcript':[], 'debug':'', 'log':[{'event':'LOADED'},{'event':'admit','at':239000,'epoch':3},{'event':'cancel','at':240000,'epoch':4},{'event':'admit','at':242000,'epoch':3},{'event':'poke','at':242500,'epoch':3}]}
 try: m.special([before,during],'collision')
 except (ValueError,RuntimeError): sys.exit(0)
 sys.exit(1)`);
@@ -93,17 +79,17 @@ with tempfile.TemporaryDirectory() as d:
  sys.exit(1)`.replaceAll('sys.argv[2]', JSON.stringify(kind)));
   expect(result.status, result.stderr).toBe(0);
 });
-test('all runs the three 5m sequences and leaves ttl-1h to its own lane', () => {
+test('all runs the four 5m sequences and leaves ttl-1h to its own lane', () => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
  root=pathlib.Path(d);plugin=root/'plugin';(plugin/'.claude-plugin').mkdir(parents=True);(plugin/'.claude-plugin/plugin.json').write_text('{}')
  seen=[]
  m.run=lambda *a,**k: types.SimpleNamespace(returncode=0,stdout='2.1.302',stderr='')
  def lane(args,output,mode,**kwargs):
   output.mkdir(parents=True,exist_ok=True);seen.append(mode);return {}
- m.lane=lane;m.special=lambda *a: 'PASS mock safety';m.shutil.which=lambda tool: tool
+ m.lane=lane;m.special=lambda *a: 'PASS mock safety';m.checker.check_cap=lambda lane: {'verdict':'PASS mock cap'};m.shutil.which=lambda tool: tool
  sys.argv=['runner','--all','--auto-effort-dir',str(plugin),'--output',str(root/'out')]
  result=m.main()
- assert seen==['warm','control','input','delivery','lease','killed'] and result==0,(seen,result)`);
+ assert seen==['warm','control','cap','input','delivery','killed'] and result==0,(seen,result)`);
   expect(result.status, result.stderr).toBe(0);
 });
 test('late API failure becomes VOID during polling rather than a return timeout', () => {
@@ -129,13 +115,11 @@ test('late API failure becomes VOID during polling rather than a return timeout'
 });
 function oneHour(warm: boolean) {
   const at = 1000000, gap = warm ? 4001000 : 421000;
-  const usage = (read: number) => ({ input_tokens: 1000, output_tokens: 3, cache_read_input_tokens: read, cache_creation_input_tokens: 49000 - read });
-  const message = (text: string, offset: number, type = 'assistant') => ({ type, timestamp: new Date(at + offset).toISOString(), message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text }], usage: usage(49000) } });
   return { transcriptPath: 'transcript.jsonl', debug: '', effort: [],
-    transcript: [message('WAITING', 0), message('<task-notification>LONG_PROBE_DONE</task-notification>', gap - 1000, 'user'), message('RETURNED', gap), ...requests()],
+    transcript: [message('WAITING', 0), ...(warm ? [message(poke(1), 2880100, 'user'), message('waiting', 2882000)] : []), message('<task-notification>LONG_PROBE_DONE</task-notification>', gap - 1000, 'user'), message('RETURNED', gap), ...requests()],
     log: [{ event: 'LOADED', at, epoch: 0, ttl: '5m', ttlSource: 'assumed' }, { event: 'step', at: at - 500, anchorAt: at - 500, epoch: 1, ttl: '5m', ttlSource: 'assumed' },
       { event: 'step', at, anchorAt: at, epoch: 1, ttl: '1h', ttlSource: 'env' }, { event: 'decision', at, epoch: 1, ttl: '1h', ttlSource: 'env', reason: warm ? 'eligible' : '1h-unproven' },
-      ...(warm ? [{ event: 'admit', at: at + 2880000, epoch: 1, ttl: '1h', ttlSource: 'env' }, { event: 'fork', at: at + 2880000, epoch: 1, ttl: '1h', ttlSource: 'env', context: 50000, usage: usage(49000) }] : [])] };
+      ...(warm ? [{ event: 'admit', at: at + 2880000, epoch: 1, ttl: '1h', ttlSource: 'env' }, { event: 'poke', at: at + 2885000, epoch: 1, ttl: '1h', ttlSource: 'env', context: 50000, usage: usage(49000) }] : [])] };
 }
 function check1h(lane: unknown, warm: boolean) {
   return python(`lane=json.loads(sys.argv[2])
@@ -149,24 +133,24 @@ test.each([true, false])('1h evidence is accepted (warm1h %s)', warm => {
 });
 test.each([
   ['5m-ttl', true, 'ERROR need 1h rows'], ['assumed-source', true, 'ERROR need 1h rows'], ['short-gap', true, 'NOT RUN: main gap'],
-  ['two-forks', true, 'FAIL prescribed 1h fork'], ['late-admit', true, 'FAIL 1h admission timing'], ['cold-return', true, 'FAIL 1h refresh did not hold'],
-  ['refusal-fork', false, 'FAIL 1h refusal admitted'], ['refusal-reason', false, 'FAIL 1h refusal reason'], ['refusal-cold', false, 'FAIL 1h TTL not in effect'],
+  ['two-pokes', true, 'FAIL prescribed 1h poke'], ['late-admit', true, 'FAIL 1h admission timing'], ['cold-return', true, 'FAIL 1h refresh did not hold'],
+  ['refusal-poke', false, 'FAIL 1h refusal admitted'], ['refusal-reason', false, 'FAIL 1h refusal reason'], ['refusal-cold', false, 'FAIL 1h TTL not in effect'],
 ] as const)('1h evidence rejects %s', (problem, warm, text) => {
-  const lane: any = oneHour(warm), step = lane.log[3], reply = lane.transcript[2];
+  const lane: any = oneHour(warm), step = lane.log[3], reply = lane.transcript.find((r: any) => r.message.content[0]?.text === 'RETURNED');
   if (problem === '5m-ttl') step.ttl = '5m';
   if (problem === 'assumed-source') step.ttlSource = 'assumed';
   if (problem === 'short-gap') reply.timestamp = new Date(1000000 + 3500000).toISOString();
-  if (problem === 'two-forks') lane.log.push({ ...lane.log[5], at: 1000000 + 3000000 });
+  if (problem === 'two-pokes') lane.log.push({ ...lane.log[5], at: 1000000 + 3000000 });
   if (problem === 'late-admit') lane.log[4].at += 10000;
   if (problem === 'cold-return' || problem === 'refusal-cold') reply.message.usage = { input_tokens: 1000, output_tokens: 3, cache_read_input_tokens: 0, cache_creation_input_tokens: 49000 };
-  if (problem === 'refusal-fork') lane.log.push({ event: 'fork', at: 1200000, epoch: 1, ttl: '1h', ttlSource: 'env' });
+  if (problem === 'refusal-poke') lane.log.push({ event: 'poke', at: 1200000, epoch: 1, ttl: '1h', ttlSource: 'env' });
   if (problem === 'refusal-reason') step.reason = 'eligible';
   const result = check1h(lane, warm);
   expect(result.status, result.stdout + result.stderr).toBe(2);
   expect(result.stdout).toContain(text);
 });
 test.each(['pair', '1h'])('a request keeping fewer messages than its base sent voids the lane before any cache verdict (%s)', kind => {
-  const rewrite = (lane: any) => { lane.transcript.find((r: any) => r.id === 'r3').keep = 1; lane.log.find((r: any) => r.event === 'fork').usage.cache_read_input_tokens = 34000; };
+  const rewrite = (lane: any) => { lane.transcript.find((r: any) => r.id === 'r3').keep = 1; lane.log.find((r: any) => r.event === 'poke').usage.cache_read_input_tokens = 34000; };
   const input: any = kind === 'pair' ? pair() : oneHour(true);
   rewrite(kind === 'pair' ? input.lanes[0] : input);
   const result = kind === 'pair' ? checkPair(input) : check1h(input, true);
@@ -277,24 +261,4 @@ m.run=run; m.marked_pids=lambda marker: []
 r=m.cleanup('kw-x','marker',None)
 print(json.dumps({'signal':m.STOP['signal'],'closed':r['nativeSocketClosed'],'errors':r['errors']}))`);
   expect(result.stdout.trim(), result.stderr).toBe('{"signal": 15, "closed": true, "errors": []}');
-});
-test.each(['good', 'cold-warm', 'tool', 'main-text', 'no-admit', 'warm-control', 'no-usage', 'wrong-output', 'wrong-spend', 'wrong-ledger', 'missing-parent-return', 'missing-parent-notice'])('sub-agent evidence %s is independently judged', problem => {
-  const message = (text: string, at: number, read = 49000, type = 'assistant') => ({ type, at, ...(type === 'user' && text.includes('<task-notification>') ? { origin: { kind: 'task-notification' } } : {}), message: { id: String(at), model: 'claude-haiku-5-5', content: [{ type: 'text', text }], usage: { input_tokens: 1000, cache_read_input_tokens: read, cache_creation_input_tokens: 49000 - read, output_tokens: 3 } } });
-  const lane = (warm: boolean): any => ({ debug: '', effort: [], transcript: [...requests(), ...(warm ? [message('<task-notification><task-id>a</task-id><result>K</result></task-notification>', 241050, 0, 'user'), message('STILL_WAITING', 241100)] : []), message('<task-notification><task-id>a</task-id><result>SUBAGENT_RETURNED</result></task-notification>', 542000, 0, 'user'), message('RETURNED', 543000)], agentId: 'a', subagentPath: 'agent-a.jsonl', log: [{ event: 'LOADED' }, ...(warm ? [{ kind: 'subagent', agentId: 'a', event: 'admit', reason: 'eligible', at: 240000 }, { kind: 'subagent', agentId: 'a', event: 'warm', at: 241000, usage: { input_tokens: 1000, cache_read_input_tokens: 49000, cache_creation_input_tokens: 0, output_tokens: 3 }, spent: 5915, warms: 1, ledger: { spent: 5915, warms: 1 } }] : [])], subagent: [
-    { type: 'assistant', at: 0, message: { content: [{ type: 'tool_use', id: 'shell', name: 'Bash', input: { command: 'sleep 540', run_in_background: true } }] } },
-    { type: 'user', at: 0, toolUseResult: { backgroundTaskId: 'work' }, message: { content: [{ type: 'tool_result', tool_use_id: 'shell' }] } }, message('SUBAGENT_WAITING', 1000),
-    ...(warm ? [message('Cache keep-warm: your prompt cache was about to expire', 240000, 49000, 'user'), message('K', 241000)] : []),
-    message('<task-notification><task-id>work</task-id></task-notification>', 540000, 0, 'user'), message('SUBAGENT_RETURNED', 541000, warm ? 49000 : 0)] });
-  const input: any = { mode: 'subagent-wait', lanes: [lane(true), lane(false)] }, warm = input.lanes[0];
-  if (problem === 'no-usage') delete warm.log[2].usage;
-  if (problem === 'wrong-output') warm.log[2].usage.output_tokens = 0;
-  if (problem === 'wrong-spend') warm.log[2].spent = 1;
-  if (problem === 'wrong-ledger') warm.log[2].ledger.spent = 1;
-  if (problem === 'cold-warm') warm.subagent[4].message.usage.cache_read_input_tokens = 0;
-  if (problem === 'tool') warm.subagent[4].message.content.push({ type: 'tool_use', name: 'Bash' });
-  if (problem === 'main-text') warm.transcript.push(message('Cache keep-warm:', 240000, 49000, 'user'));
-  if (problem === 'no-admit') warm.log = warm.log.filter((r: any) => r.event !== 'admit');
-  if (problem === 'missing-parent-return') warm.transcript.pop(); if (problem === 'missing-parent-notice') warm.transcript.splice(3, 1);
-  if (problem === 'warm-control') input.lanes[1].subagent.at(-1).message.usage.cache_read_input_tokens = 49000;
-  const result = checkPair(input); expect(result.status, result.stdout).toBe(problem === 'good' ? 0 : 2); if (problem === 'good') { expect(JSON.parse(result.stdout).lanes[0]).toMatchObject({ parentWarmRequests: [1], parentReturnRequests: 1, zeroCollateral: false }); }
 });

@@ -1,4 +1,4 @@
-cache-keepwarm credits two MIT-licensed predecessors. Its code is written for this plugin's mechanism, an invisible fork replay admitted by one budget; the ideas below were ported, and each licence is carried in full so any overlap stays licensed.
+cache-keepwarm credits two MIT-licensed predecessors. Its code is written for this plugin's mechanism, a visible keep-warm poke admitted by one budget and capped per wait; the ideas below were ported, and each licence is carried in full so any overlap stays licensed.
 
 1. claude-cache-warm — <https://github.com/FiredMosquito831/claude-cache-warm>
    Ideas ported: skip a warm once the cache has expired, a minimum context of 20000 tokens, supersede a pending warm when newer activity arrives.

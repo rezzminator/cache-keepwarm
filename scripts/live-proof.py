@@ -24,7 +24,9 @@ BASE = ('Live cache experiment, no repository work. Start ONE general-purpose ba
         'Its exact task, in order, every Bash call in the foreground (never run_in_background) with timeout 600000: STEPS. '
         'Do not finish the agent early. '
         'No file edits, Git, or other chats. Main: return exactly WAITING once the agent is backgrounded. '
-        'Do not poll or do other work. On LONG_PROBE_DONE reply RETURNED only. No effort changes or effort tools.\n')
+        'Do not poll or do other work. On LONG_PROBE_DONE reply RETURNED only. No effort changes or effort tools. '
+        'A message headed Keep-warm poke is part of this experiment: the agent it lists is intentional and not stale, so '
+        'reply exactly waiting and end your turn, with no tool call.\n')
 # A sub-agent's own background shell makes Claude Code send the main chat an interim completion notice, a main turn the
 # quiet window forbids; chained foreground sleeps under the 600 s Bash ceiling keep the agent busy for the whole wait.
 CHUNK = 590
@@ -52,8 +54,10 @@ def launch_subagent_text(seconds):
             f"`python3 -c 'import time; time.sleep({seconds}); print(\"SUBAGENT_SLEEP_DONE\")'`. "
             "After the Bash is backgrounded, reply exactly SUBAGENT_WAITING and END YOUR TURN while it runs. "
             "Do not poll, use Monitor, or wait in a foreground tool. When its task-notification arrives, reply "
-            "SUBAGENT_RETURNED and finish. Follow any cache keep-warm instruction with exactly K and no tool call. "
-            "Main: reply WAITING after spawning. An interim SUBAGENT_WAITING is NOT completion: reply STILL_WAITING, "
+            "SUBAGENT_RETURNED and finish. A message headed Keep-warm poke is part of this experiment: the Bash it "
+            "lists is intentional and not stale, so reply exactly waiting and end your turn, with no tool call. "
+            "Main: reply WAITING after spawning. An interim report from the agent (SUBAGENT_WAITING, waiting or any other) "
+            "is NOT completion: reply STILL_WAITING, "
             "never poll or spawn again. Reply RETURNED only when the agent reports SUBAGENT_RETURNED. "
             "No edits, Git, or other chats. No effort changes or effort tools.\n" +
             "\n".join(f'Fixture {i}: ceramic lantern cobalt meadow quiet orbit.' for i in range(FIXTURE_LINES)))
@@ -169,7 +173,7 @@ def kill_chat(name, marker, socket):
     return {'nativeSocketClosed': dead, 'ownedProcessesRemaining': left, 'killOutput': kill_output, 'errors': errors}
 
 
-def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m', subagent=False, subagents=True):
+def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m', subagent=False, subagents=True, extra_env=None):
     directory = output / mode
     directory.mkdir(parents=True, mode=0o700)
     marker = secrets.token_hex(10)
@@ -187,8 +191,8 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
     # Claude Code's prompt suggestion sends the conversation after each turn, writing its cache (measured surviving a
     # 12-minute control wait): off, so the control lane stays cold and the warm lane's reads are the plugin's own.
     env.update(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='false', CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)]), CACHE_KEEPWARM_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
-    if mode == 'lease':
-        env['CACHE_KEEPWARM_MAX_WAIT_MINUTES'] = '6'
+    # A lane's own overrides (a poke cap, the sub-agent context gate) reach only its chat.
+    env.update(extra_env or {})
     evidence = {'mode': mode, 'log': [], 'transcript': []}
     socket = None
     failure = None
@@ -235,6 +239,9 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             if elapsed >= 60 and 'waitingCapture' not in evidence:
                 evidence['waitingCapture'] = capture(socket)
                 (directory / 'waiting.capture').write_text(evidence['waitingCapture'])
+            if mode == 'cap' and elapsed >= 600 and 'limitCapture' not in evidence:
+                evidence['limitCapture'] = capture(socket)
+                (directory / 'limit.capture').write_text(evidence['limitCapture'])
             if action and elapsed >= 200 and not sent:
                 typed = run(['tmux', '-L', socket, 'send-keys', '-l', action])
                 entered = run(['tmux', '-L', socket, 'send-keys', 'Enter'])
@@ -306,19 +313,17 @@ def special(lanes, mode):
         cancel = cancels[-1]
         admits = [r for r in before['log'] if r.get('event') == 'admit']
         if any(waits[0] <= r['at'] <= cancel['at'] or r['at'] > cancel['at'] and r['epoch'] < cancel['epoch'] for r in admits):
-            raise RuntimeError('FAIL fork admitted in cancelled episode')
+            raise RuntimeError('FAIL poke admitted in cancelled episode')
         if not any(r['at'] >= max(pongs) and r['epoch'] > cancel['epoch'] for r in admits):
             raise RuntimeError('FAIL no new qualifying episode after PONG')
-        near = [r for r in during['log'] if r.get('event') in ('admit', 'fork', 'cancel')]
+        near = [r for r in during['log'] if r.get('event') in ('admit', 'poke', 'cancel')]
         if not any(a.get('event') == 'admit' and b.get('event') == 'cancel' and 0 <= b['at'] - a['at'] <= 10000 and a['epoch'] < b['epoch'] for a in near for b in near):
             raise RuntimeError('UNSEEN in-flight collision')
         return 'PASS collision: admitted-before-cancel; stale admissions excluded'
-    lease, killed = lanes
-    if len([r for r in lease['log'] if r['event'] == 'fork']) > 1 or not any(r.get('reason') in ('lease', 'wait-window-short') for r in lease['log']):
-        raise RuntimeError('FAIL stale lease')
-    if any(r['event'] == 'fork' for r in killed['log']) or not any(r['event'] == 'cancel' for r in killed['log']):
+    killed, = lanes
+    if any(r['event'] in ('admit', 'poke') for r in killed['log']) or checker.poke_turns(killed['transcript']) or not any(r['event'] == 'cancel' for r in killed['log']):
         raise RuntimeError('FAIL killed task cleanup')
-    return 'PASS stale: lease grant ended and killed work did not warm'
+    return 'PASS stale: killed work was never poked'
 
 def warm_1h():
     found = re.search(r'^export const WARM_1H = (true|false);$', (ROOT / 'plugins/cache-keepwarm/src/schedule.ts').read_text(), re.M)
@@ -328,7 +333,7 @@ def warm_1h():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--lane', choices=['subagent-wait', 'wait-return', 'ttl-1h', 'collision', 'stale'])
+    parser.add_argument('--lane', choices=['subagent-wait', 'wait-return', 'cap', 'ttl-1h', 'collision', 'stale'])
     parser.add_argument('--all', action='store_true')
     parser.add_argument('--cwd', type=Path, default=ROOT)
     parser.add_argument('--output', type=Path)
@@ -357,11 +362,14 @@ def main():
         return 2
     output.mkdir(parents=True, exist_ok=True)
     failures = []
-    for mode in ['wait-return', 'collision', 'stale'] if args.all else [args.lane]:
+    for mode in ['wait-return', 'cap', 'collision', 'stale'] if args.all else [args.lane]:
         try:
             directory = output / mode
             if mode == 'subagent-wait':
-                evidence = {'mode': mode, 'lanes': [lane(args, directory, 'warm', seconds=540, subagent=True), lane(args, directory, 'control', seconds=540, subagent=True, subagents=False)]}
+                # The sub-agent alone is poked: its context gate opens, and the main chat's closes.
+                gate = {'CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT': '0', 'CACHE_KEEPWARM_MIN_CONTEXT': '100000000'}
+                # 7 minutes: one poke at 4 carries the return, inside one budget even with its parent wake; the control lapses.
+                evidence = {'mode': mode, 'lanes': [lane(args, directory, 'warm', seconds=420, subagent=True, extra_env=gate), lane(args, directory, 'control', seconds=420, subagent=True, subagents=False, extra_env=gate)]}
                 path = directory / 'pair.json'
                 path.write_text(json.dumps(evidence, indent=2))
                 print(json.dumps(checker.check_subagents(evidence)), flush=True)
@@ -378,10 +386,15 @@ def main():
                 print(result.stdout, flush=True)
                 if result.returncode:
                     raise RuntimeError('FAIL wait-return checker: ' + result.stdout)
+            elif mode == 'cap':
+                # A cap of 2 over a wait long enough for 3 pokes: the third is never sent.
+                evidence = {'mode': mode, 'lanes': [lane(args, directory, 'cap', seconds=900, extra_env={'CACHE_KEEPWARM_MAX_POKES': '2'})]}
+                (directory / 'cap.json').write_text(json.dumps(evidence, indent=2))
+                print(json.dumps(checker.check_cap(evidence['lanes'][0])), flush=True)
             elif mode == 'collision':
                 print(special([lane(args, directory, 'input', action='Reply PONG only; keep the background agent running.'), lane(args, directory, 'delivery', seconds=242)], mode), flush=True)
             else:
-                print(special([lane(args, directory, 'lease'), lane(args, directory, 'killed', action='Stop the background agent with TaskStop, then reply STOPPED only.')], mode), flush=True)
+                print(special([lane(args, directory, 'killed', action='Stop the background agent with TaskStop, then reply STOPPED only.')], mode), flush=True)
         except Stopped:
             pass
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
