@@ -4,7 +4,7 @@ import type { ReasonCode } from '../plugins/cache-keepwarm/src/decision.ts';
 import { Harness } from './stand-in.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 const run = promisify(execFile);
@@ -54,8 +54,10 @@ test('main session publishes atomic v1 replacements, toggles, and deletes on end
     await h.command('off'); await Promise.all(reads);
     expect(await record()).toMatchObject({ enabled: false, source: 'session', state: 'off', reason: 'off', nextAt: null });
     expect(await readdir(dir)).toEqual([h.id + '.json']);
+    await writeFile(join(dir, `.${h.id}.killed-writer.tmp`), '{');
+    await writeFile(join(dir, '.other-session.killed-writer.tmp'), '{');
     await h.emit('session.end', { reason: 'exit' });
-    expect(await readdir(dir)).toEqual([]);
+    expect(await readdir(dir)).toEqual(['.other-session.killed-writer.tmp']);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
