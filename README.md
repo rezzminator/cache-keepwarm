@@ -5,12 +5,12 @@
 **Keeps Claude Code prompt caches warm during background waits with visible pokes, for the main chat and waiting sub-agents, capped per wait and each under its own rewrite-saving budget.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.4.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.1-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>
 
-> **Status.** Public at [rezzminator/cache-keepwarm](https://github.com/rezzminator/cache-keepwarm), with development on `develop`. Version 0.4.0 keeps waits warm with visible pokes, at most `maxPokes` per unchanged wait, and pokes waiting sub-agents by default. Its live measurements are recorded below; they are not a claim that 0.4.0 has been published.
+> **Status.** Public at [rezzminator/cache-keepwarm](https://github.com/rezzminator/cache-keepwarm), with development on `develop`. Version 0.4.1 keeps waits warm with visible pokes, at most `maxPokes` per unchanged wait, and pokes waiting sub-agents by default. Its live measurements are recorded below; they are not a claim that 0.4.1 has been published.
 
 ## Contents
 

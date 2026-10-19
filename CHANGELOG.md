@@ -4,6 +4,12 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-19
+
+### Fixed
+
+- A resumed chat no longer paints `cache-keepwarm: resumed: fresh tracked Stop required` in the status line: `resumed` is a resting state like `idle`, so it paints nothing. `/keepwarm status` and the session-state JSON still report `resumed`.
+
 ## [0.4.0] — 2026-10-19
 
 ### Added

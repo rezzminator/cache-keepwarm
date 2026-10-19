@@ -39,7 +39,7 @@ function paint($: EngineInterface, s: State) {
     else if (s.reason === 'budget') text = formatStopped({ reason: 'budget', warms: e?.warms ?? 0, reasonCode: s.reason });
     else if (s.reason === 'ended' && s.ended) text = formatStopped({ reason: 'ended', item: s.ended.item, detail: s.ended.ended, reasonCode: s.reason });
     else if (s.reason === 'poke-failed' || s.reason === 'timer-failed') text = formatStopped({ reason: s.reason === 'poke-failed' ? 'error' : 'timer', detail: s.detail, reasonCode: s.reason });
-    else if (s.reason !== 'idle' && s.reason !== 'nothing-pending') text = formatStopped({ reason: 'decision', detail: s.reason, reasonCode: s.reason });
+    else if (s.reason !== 'idle' && s.reason !== 'nothing-pending' && s.reason !== 'resumed') text = formatStopped({ reason: 'decision', detail: s.reason, reasonCode: s.reason });
   }
   if (v.warnings?.length) text = [text, ...v.warnings].filter(Boolean).join(' · ');
   $.ui.status(text); publishState($, s);

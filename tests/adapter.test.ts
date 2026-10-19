@@ -103,6 +103,12 @@ test('same session restore shows age, but no grant; zero cache step invalidates'
   await resumed.step({ input_tokens: 50000, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'haiku' }); await resumed.stop();
   expect(resumed.pending).toHaveLength(0); expect(resumed.status).toContain('no main request');
 });
+test('a resumed session paints no status line, while /keepwarm status still says resumed', async () => {
+  const h = new Harness(); await h.arm(); const entries = new Map(h.values);
+  const resumed = new Harness(); resumed.values = entries; resumed.now = h.now + 1000; await resumed.start();
+  expect(resumed.statuses.length).toBeGreaterThan(0); expect(resumed.status).toBeUndefined(); expect(resumed.statuses.filter(Boolean).join(' ')).not.toContain('resumed');
+  expect((await resumed.command('status'))?.text).toContain('[resumed]');
+});
 test('empty programmatic draft changes preserve the grant; repeated Stop retains spend', async () => {
   const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm();
   await h.emit('prompt.change', { text: '', cursor: 0, origin: 'plugin' }); expect(h.pending).toHaveLength(1);
