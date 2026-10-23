@@ -11,7 +11,7 @@ A Claude Code function-hooks plugin: while the main chat or a waiting sub-agent 
 - `types/claude-code.d.ts`: the plugin API (from `/plugin-types`), the truth for every hook's shape; grep it before using an event.
 - `plugins/cache-keepwarm/.claude-plugin/plugin.json`: manifest and `userConfig`; the root `.claude-plugin/marketplace.json` makes the repo its own marketplace.
 - `scripts/live-proof.sh` drives the live lanes; `scripts/release-check.sh` checks the release.
-- `.github/workflows/`: `ci.yml` runs the gates and the release check, `release.yml` publishes on a `cache-keepwarm--v*` tag.
+- `.github/workflows/release.yml`: on a pull request to `main` its `check` and `release` jobs run `make gate` and `make release`; merging that pull request runs `publish`, which tags `cache-keepwarm--vX.Y.Z` and publishes the GitHub release.
 - `.claude/agents/gitter.md`: the repository's Git writer.
 - `THIRD-PARTY-NOTICES`: the licences of the two credited predecessors.
 
@@ -19,6 +19,7 @@ A Claude Code function-hooks plugin: while the main chat or a waiting sub-agent 
 
 - `npm test`: vitest on `tests/`, then `claude plugin test plugins/cache-keepwarm`; `npm run test:unit` and `npm run test:hooks` run the two halves.
 - `npm run typecheck`, `npm run validate:plugin` (`claude plugin validate --strict` on the root and on the plugin), `npm run check:structure` (the structure rules under § Rules that a script can check) and `npm run release:check` all pass before a commit.
+- `make release-check` runs every check `release.yml` runs on a pull request to `main` (`make gate`, then `make release`: the version moved past `origin/main`'s, as last fetched, and a non-empty CHANGELOG section), on Node 24 through `mise` as in CI.
 - The hook tests and `validate:plugin` need `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; a machine without `claude` on `PATH` reports the gate NOT RUN, never passed.
 - `npm run live` is `scripts/live-proof.sh`: a real Haiku (`claude-haiku-5-5`) chat per lane, plugin loaded through `CLAUDE_CODE_PLUGIN_DIRS` in the process environment. Invocation: `npm run live -- --lane wait-return --cwd <trusted-dir> --auto-effort-dir <path> --output <outside-repo-path>`; `cap`, `subagent-wait`, `ttl-1h`, `collision`, `stale` and `--all` (wait-return, cap, collision, stale) are the other modes; a lane's own overrides (`CACHE_KEEPWARM_MAX_POKES=2` for `cap`, `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT=0` with the main gate closed for `subagent-wait`) reach only its chat. Run it after any change to the adapter or to a decision.
 - The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the chat launcher `pfm`, the seat's existing configuration, a `--cwd` with its own exact trust entry in the seat's configuration, and the directory of the second plugin the comparison loads (`--auto-effort-dir`). Claude Code does not inherit trust into subdirectories or nested repositories, so the repository checkout itself is usually untrusted. A directory Claude Code has not yet trusted stops at its native folder-trust prompt before the plugin loads: that run is NOT RUN, and the harness never bypasses the consent.
@@ -60,13 +61,13 @@ A Claude Code function-hooks plugin: while the main chat or a waiting sub-agent 
 
 ## Branches and releases
 
-- `develop` is the default branch: every change lands there, by a commit or a pull request, and CI (`.github/workflows/ci.yml`) runs the gates on it.
-- `main` is release-only. It moves only by merging the `develop → main` pull request, with a merge commit and never a squash, so both branches share one history. The marketplace installs the plugin from `main` (`git-subdir`, `ref: main`), so users only ever get a released version.
+- `develop` is the default branch: every change lands there, by a commit or a pull request. No CI runs on a push to any branch: `.github/workflows/release.yml` runs only on a pull request to `main`. `develop` is protected by the ruleset `develop keeps its history`: never force-push or delete it.
+- `main` is release-only (ruleset `main is release-only`). It moves only by merging the `develop → main` pull request, with a merge commit and never a squash, so both branches share one history, and only after `check` and `release` pass: never a direct push, never an admin override. The marketplace installs the plugin from `main` (`git-subdir`, `ref: main`), so users only ever get a released version.
 - A release, in order:
-  1. On `develop`: bump the version in all four places, and move `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] — date`. `npm run release:check` passes.
-  2. Open the `develop → main` pull request. Its `release` check requires the version to have moved past `main`'s.
-  3. Merge once CI is green.
-  4. On `main`: `claude plugin tag --push plugins/cache-keepwarm` creates and pushes `cache-keepwarm--vX.Y.Z`. `release.yml` then publishes the GitHub release from the CHANGELOG section.
+  1. On `develop`: bump the version in all four places, and move `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] — date`. Every merge into `main` publishes, so a pre-release suffix (`-dev.N`, `-alpha`) becomes the real release version here.
+  2. `git fetch origin main`, then `make release-check` passes.
+  3. Open the `develop → main` pull request. Its `check` and `release` checks run the same make targets; `release` requires the version to have moved past `main`'s.
+  4. Merge once the checks are green. The merge is the release: `release.yml`'s `publish` job tags the merge commit `cache-keepwarm--vX.Y.Z` and publishes the GitHub release from the CHANGELOG section. A tag is never pushed by hand.
 - Semantic versioning: a fix is a patch; a new option or behaviour is a minor; a renamed or removed option or argument is a major, and its CHANGELOG entry says how to migrate.
 - Publishing: code is pushed, and a release is cut, only when the owner asks in the current request; a green gate is never that ask.
 - Git writes go through this repo's gitter, `.claude/agents/gitter.md`.
