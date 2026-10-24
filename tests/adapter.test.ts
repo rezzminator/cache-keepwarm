@@ -167,6 +167,12 @@ test('bad launch variables remain observable after normal status painting', asyn
   expect(h.status).toContain('CACHE_KEEPWARM_MAX_POKES'); expect((await h.command('status')).text).toContain('CACHE_KEEPWARM_MAX_POKES');
   expect(h.status).toContain('pokes 0/4');
 });
+test('status off paints no waiting text, while a bad option stays visible', async () => {
+  const h = new Harness({ status: false }); await h.arm();
+  expect(h.pending).toHaveLength(1); expect(h.statuses.filter(Boolean)).toEqual([]);
+  const bad = new Harness({ status: false }, { CACHE_KEEPWARM_MAX_POKES: 'bad' }); await bad.arm();
+  expect(bad.status).toContain('CACHE_KEEPWARM_MAX_POKES'); expect(bad.status).not.toContain('waiting on');
+});
 test('a poke completing after its session ended is never charged into the next one', async () => {
   const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000);
   h.id = 'session-2'; await h.emit('session.end', { reason: 'clear' }, { sessionId: h.id });
