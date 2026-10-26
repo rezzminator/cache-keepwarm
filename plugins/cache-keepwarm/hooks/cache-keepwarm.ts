@@ -8,7 +8,7 @@ import { decideWarm, type Decision, type ReasonCode } from '../src/decision.ts';
 import { parseControl, effectiveEnabled } from '../src/control.ts';
 import { pickRestore, snapshotSession, sessionKey, sessionPrefix, staleKeys, type Anchor } from '../src/resume.ts';
 import { appendLog, logFileName, logBase, leafRefusal, type LogRow, type LogStat } from '../src/log.ts';
-import { compactFacts, compactOutcome, compactResets } from '../src/compact.ts';
+import { compactFacts, compactOutcome, compactReset } from '../src/compact.ts';
 import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/pokes.ts';
 import { pokeMessage, formatWaiting, formatStopped, formatState, sessionState, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
 type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: number; originalExpiry: number; context: number; model: string; spent: number; warms: number; epoch: number; lastPoke: number | null; failed?: string };
@@ -18,7 +18,7 @@ type Poke = { text: string; episode: Episode; sessionId: string; turnId?: string
 type WarmCharge = { a: SubState; epoch: number; at: number; text: string; wake: number; turnId?: string; episode: NonNullable<SubState['episode']>; sessionId: string; owner?: State };
 type State = { stateDir: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; rows: LogRow[]; writes: Promise<void>; stores: Promise<void>; instance: string; logPinned: string | null; logFailed: boolean; logError?: string; inactive?: boolean; ended?: EndedItem; detail?: string };
 async function readOptionEnv($: EngineInterface) {
-  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_LOG_DIR: await $.env.get('CACHE_KEEPWARM_LOG_DIR') };
+  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_LOG_DIR: await $.env.get('CACHE_KEEPWARM_LOG_DIR'), CACHE_KEEPWARM_STATUS: await $.env.get('CACHE_KEEPWARM_STATUS') };
 }
 async function readTtlEnv($: EngineInterface): Promise<TtlEnv> { return { FORCE_PROMPT_CACHING_5M: await $.env.get('FORCE_PROMPT_CACHING_5M'), CLAUDE_CODE_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'), CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'), ENABLE_PROMPT_CACHING_1H: await $.env.get('ENABLE_PROMPT_CACHING_1H') }; }
 function enabled(s: State) { return effectiveEnabled(s.options.enabled, s.override); }
@@ -32,7 +32,7 @@ function view(s: State): StatusView {
 function paint($: EngineInterface, s: State) {
   const v = view(s), e = s.episode;
   let text: string | undefined;
-  if (enabled(s) && !s.busy) {
+  if (enabled(s) && !s.busy && s.options.status) {
     if (s.reason === 'eligible' && e) text = formatWaiting({ ...v, pokes: mainPokes(s), reasonCode: s.reason });
     else if (s.reason === 'small') text = formatStopped({ reason: 'small', context: s.anchor?.context, minContext: s.options.minContext, reasonCode: s.reason });
     else if (s.reason === 'poke-limit') text = formatStopped({ reason: 'poke-limit', pokes: mainPokes(s), reasonCode: s.reason });
@@ -343,7 +343,9 @@ export const register: Register = (on, options) => {
   });
   on('session.compact', async ($, e, next) => {
     const c = compactFacts(e);
-    if (compactResets(c)) { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); }
+    const reset = compactReset(c);
+    if (reset === 'main') { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); }
+    else if (reset === 'agent') { const a = s.subagents.get(c.agentId!); if (a) { endSub(s, a); a.anchor = null; } }
     // Logged once the compaction answers: a vetoed one (`skip`) or a failed one installs nothing, and the live harness reads the outcome.
     let result: Awaited<ReturnType<typeof next>>;
     try { result = await next(e); } catch (error) { await log($, s, 'compact', s.reason, undefined, s.episode, undefined, { ...c, outcome: 'failed' }); throw error; }

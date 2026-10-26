@@ -5,12 +5,12 @@
 **Keeps Claude Code prompt caches warm during background waits with visible pokes, for the main chat and waiting sub-agents, capped per wait and each under its own rewrite-saving budget.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.4.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>
 
-> **Status.** Public at [rezzminator/cache-keepwarm](https://github.com/rezzminator/cache-keepwarm), with development on `develop`. Version 0.4.1 keeps waits warm with visible pokes, at most `maxPokes` per unchanged wait, and pokes waiting sub-agents by default. Its live measurements are recorded below; they are not a claim that 0.4.1 has been published.
+> **Status.** Public at [rezzminator/cache-keepwarm](https://github.com/rezzminator/cache-keepwarm), with development on `develop`. Version 0.5.0 keeps waits warm with visible pokes, at most `maxPokes` per unchanged wait, and pokes waiting sub-agents by default. Its live measurements are recorded below; they are not a claim that 0.5.0 has been published.
 
 ## Contents
 
@@ -154,6 +154,7 @@ Six options, set in the plugin's `/config` page or by variable:
 | `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for `{session id}.{instance}.jsonl`, a metadata-only decision log of at most 500 rows per Claude Code process; empty writes none |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents in independent episodes; each poke also wakes the spawning parent for one real turn, which the forecast counts. Off leaves the main-chat path unchanged |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
+| `CACHE_KEEPWARM_STATUS` | `status` | `true` | Show the waiting and stopped status text under the prompt; off paints only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the JSON are unaffected |
 
 Precedence is variable, then option, then default. A blank variable is absent; booleans read `1`, `0`, `true` or `false` in any case; `maxPokes` reads a whole number of at least 1. A bad variable or option is named in the status and the default applies, never the configured option. The log never contains a label, command or description.
 

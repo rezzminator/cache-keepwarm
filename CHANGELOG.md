@@ -4,6 +4,16 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-27
+
+### Added
+
+- `status` option (`CACHE_KEEPWARM_STATUS`, default `true`): off, the plugin paints no waiting or stopped status text under the prompt, only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the session-state JSON are unaffected.
+
+### Fixed
+
+- A sub-agent's own compaction no longer cancels the main chat's warm. Every compaction reset the main chat's anchors and pending poke, so a long-running sub-agent that compacted mid-wait left the main chat unwarmed until its next turn ended, and its cache went cold. A compaction carrying an `agentId` now resets only that sub-agent's anchor; the main chat's own compaction resets as before.
+
 ## [0.4.1] — 2026-10-19
 
 ### Fixed

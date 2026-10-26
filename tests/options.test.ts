@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { URL } from 'node:url';
 import { resolveOptions } from '../plugins/cache-keepwarm/src/options.ts';
-const defaults = { enabled: true, minContext: 20000, maxPokes: 4, subagentMinContext: 100000, logDir: '', subagents: true, bad: [] };
+const defaults = { enabled: true, minContext: 20000, maxPokes: 4, subagentMinContext: 100000, logDir: '', subagents: true, status: true, bad: [] };
 test.each([
   [{}, {}, defaults],
   [{ subagents: false }, {}, { ...defaults, subagents: false }],
@@ -15,6 +15,8 @@ test.each([
   [{ subagentMinContext: 50000 }, { CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: '0' }, { ...defaults, subagentMinContext: 0 }],
   [{}, { CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: '-1' }, { ...defaults, bad: ['CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'] }],
   [{}, { CACHE_KEEPWARM_SUBAGENTS: '0' }, { ...defaults, subagents: false }],
+  [{ status: false }, {}, { ...defaults, status: false }], [{}, { CACHE_KEEPWARM_STATUS: '0' }, { ...defaults, status: false }],
+  [{ status: false }, { CACHE_KEEPWARM_STATUS: 'bad' }, { ...defaults, bad: ['CACHE_KEEPWARM_STATUS'] }],
   [{}, { CACHE_KEEPWARM_MIN_CONTEXT: '  ' }, defaults],
   [{ enabled: false, logDir: 'logs', minContext: 1, maxPokes: 1, subagentMinContext: 1 }, {}, { ...defaults, enabled: false, logDir: 'logs', minContext: 1, maxPokes: 1, subagentMinContext: 1 }],
   [{}, { CACHE_KEEPWARM_MIN_CONTEXT: '-1', CACHE_KEEPWARM_ENABLED: 'yes' }, { ...defaults, bad: ['CACHE_KEEPWARM_ENABLED', 'CACHE_KEEPWARM_MIN_CONTEXT'] }],
