@@ -8,7 +8,7 @@ import { decideWarm, type Decision, type ReasonCode } from '../src/decision.ts';
 import { parseControl, effectiveEnabled } from '../src/control.ts';
 import { pickRestore, snapshotSession, sessionKey, sessionPrefix, staleKeys, type Anchor } from '../src/resume.ts';
 import { appendLog, logFileName, logBase, leafRefusal, type LogRow, type LogStat } from '../src/log.ts';
-import { compactFacts, compactOutcome, compactResets } from '../src/compact.ts';
+import { compactFacts, compactOutcome, compactReset } from '../src/compact.ts';
 import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/pokes.ts';
 import { pokeMessage, formatWaiting, formatStopped, formatState, sessionState, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
 type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: number; originalExpiry: number; context: number; model: string; spent: number; warms: number; epoch: number; lastPoke: number | null; failed?: string };
@@ -343,7 +343,9 @@ export const register: Register = (on, options) => {
   });
   on('session.compact', async ($, e, next) => {
     const c = compactFacts(e);
-    if (compactResets(c)) { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); }
+    const reset = compactReset(c);
+    if (reset === 'main') { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); }
+    else if (reset === 'agent') { const a = s.subagents.get(c.agentId!); if (a) { endSub(s, a); a.anchor = null; } }
     // Logged once the compaction answers: a vetoed one (`skip`) or a failed one installs nothing, and the live harness reads the outcome.
     let result: Awaited<ReturnType<typeof next>>;
     try { result = await next(e); } catch (error) { await log($, s, 'compact', s.reason, undefined, s.episode, undefined, { ...c, outcome: 'failed' }); throw error; }
