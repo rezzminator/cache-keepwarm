@@ -4,6 +4,8 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-26
+
 ### Added
 
 - `status` option (`CACHE_KEEPWARM_STATUS`, default `true`): off, the plugin paints no waiting or stopped status text under the prompt, only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the session-state JSON are unaffected.
