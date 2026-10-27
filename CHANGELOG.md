@@ -4,6 +4,10 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+### Changed
+
+- The live harness (`npm run live`) no longer needs a chat launcher: each lane starts its own `claude` in its own tmux server, sets the lane's TTL through Claude Code's `CLAUDE_CODE_PROMPT_CACHE_TTL`, waits on the lane transcript for the first reply, reads a folder-trust dialog from the pane as NOT RUN, and stops the chat by killing that server. It needs only `node`, `npm`, `claude`, `python3` and `tmux`.
+
 ## [0.5.0] — 2026-10-27
 
 ### Added
