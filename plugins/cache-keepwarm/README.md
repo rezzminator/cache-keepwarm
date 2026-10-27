@@ -26,7 +26,6 @@ At most `maxPokes` pokes go to one thread while its pending items stay the same 
 | `CACHE_KEEPWARM_ENABLED` | `enabled` | `true` | Poke at all; `/keepwarm` overrides it for one chat |
 | `CACHE_KEEPWARM_MIN_CONTEXT` | `minContext` | `20000` | Smallest main-chat context in tokens worth a poke |
 | `CACHE_KEEPWARM_MAX_POKES` | `maxPokes` | `4` | Pokes per thread on one unchanged wait; an integer of at least 1 |
-| `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for a metadata-only decision log; empty writes none |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents, each poke also waking the parent for one turn; the main path is unchanged either way |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
 | `CACHE_KEEPWARM_STATUS` | `status` | `true` | Show the waiting and stopped status text under the prompt; off paints only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the JSON are unaffected |

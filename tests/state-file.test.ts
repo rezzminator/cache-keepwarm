@@ -67,7 +67,7 @@ test.each([
   [{ HOME: '/state/user' }, '/state/user/.local/state/cache-keepwarm/sessions'],
 ])('state transport resolves its directory and logs failures without breaking commands %#', async (env, directory) => {
   const h = new Harness({}, env), destinations: string[] = [];
-  (h.engine as any).process.run = async (argv: string[]) => { destinations.push(argv[3]!); throw new Error('writer unavailable'); };
+  (h.engine as any).process.run = async (argv: string[]) => { if (argv[0] !== 'node') return { exitCode: 0, stdout: '', stderr: '' }; destinations.push(argv[3]!); throw new Error('writer unavailable'); };
   await h.start();
   const result = await h.command('off');
   expect(result.text).toContain('off (session override)');

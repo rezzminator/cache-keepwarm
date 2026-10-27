@@ -34,12 +34,6 @@
       "description": "Send at most this many keep-warm pokes to one thread while its pending items stay the same and nothing else happens; any real activity or a changed set of items starts a fresh count.",
       "default": 4
     },
-    "logDir": {
-      "type": "string",
-      "title": "Decision log directory",
-      "description": "Optional directory for bounded metadata-only session JSONL logs; empty disables disk logging.",
-      "default": ""
-    },
     "subagents": {
       "type": "boolean",
       "title": "Poke waiting sub-agents",

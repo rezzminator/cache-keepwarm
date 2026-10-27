@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { Harness, pokeText as poke } from './stand-in.ts';
 test('loads native controls, arms once, pokes the main chat visibly and accounts actual spend', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm();
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm();
   expect(h.loadError).toBeUndefined(); expect(h.pending).toHaveLength(1);
   expect(h.pending[0]?.at).toBe(1792247650124); expect(h.status).toContain('waiting on agent'); expect(h.status).toContain('pokes 0/4');
   await h.advance(240000);
@@ -12,13 +12,13 @@ test('loads native controls, arms once, pokes the main chat visibly and accounts
   expect(h.commands).toMatchObject([{ name: 'keepwarm', immediate: true, argumentHint: '[on|off|status]' }]);
 });
 test.each(['stop-first', 'complete-first'])('a poke and its own reply are not activity, in either hook order: %s', async order => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000);
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000);
   await h.pokeReply({ order }); expect(h.pending).toHaveLength(1); expect(h.pending[0]?.at).toBe(h.now + 240000);
   const text = (await h.command('status')).text; expect(text).toContain('session 1 warms'); expect(text).not.toContain('last:');
   await h.advance(240000); expect(h.submits.at(-1)!.text).toBe(poke('2/4', '- agent `a`: Audit sk-test-123, pending 8m'));
 });
 test('the cap stops at N pokes on an unchanged wait and says so in the status, /keepwarm and the log', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs', CACHE_KEEPWARM_MAX_POKES: '2' }); await h.arm();
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs', CACHE_KEEPWARM_MAX_POKES: '2' }); await h.arm();
   await h.advance(240000); await h.pokeReply(); await h.advance(240000); await h.pokeReply();
   expect(h.submits.map(s => s.text.slice(0, 19))).toEqual(['Keep-warm poke 1/2:', 'Keep-warm poke 2/2:']);
   expect(h.pending).toHaveLength(0); expect(h.status).toContain('poke limit reached 2/2');
@@ -92,9 +92,9 @@ test('draft, terminal refinement and missing native inventory refuse visibly', a
     expect(h.status).toContain({ draft: 'typing', ended: 'killed', missing: 'background_tasks' }[kind]);
   }
 });
-test('log rejection is visible once and does not prevent warming', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); h.writeError = new Error('disk full'); await h.arm(); await h.advance(240000);
-  expect(h.submits).toHaveLength(1); expect(h.status).toContain('log write failed'); expect((await h.command('status')).text).toContain('log write failed');
+test('a log failure is visible once and does not prevent warming', async () => {
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); h.writeError = new Error('disk full'); await h.arm(); await h.advance(240000);
+  expect(h.submits).toHaveLength(1); expect(h.status).toContain('plugin log'); expect((await h.command('status')).text).toContain('disk full');
 });
 test('same session restore shows age, but no grant; zero cache step invalidates', async () => {
   const h = new Harness(); await h.arm(); const entries = new Map(h.values);
@@ -110,13 +110,13 @@ test('a resumed session paints no status line, while /keepwarm status still says
   expect((await resumed.command('status'))?.text).toContain('[resumed]');
 });
 test('empty programmatic draft changes preserve the grant; repeated Stop retains spend', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm();
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm();
   await h.emit('prompt.change', { text: '', cursor: 0, origin: 'plugin' }); expect(h.pending).toHaveLength(1);
   await h.advance(240000); await h.pokeReply(); await h.stop();
   expect((await h.command('status'))?.text).toContain('spent ≈ 6.6k-eq');
 });
 test('optional queued disk logging cannot delay primary input', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm();
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm();
   let release!: () => void; h.writeImpl = () => new Promise<void>(resolve => { release = resolve; });
   const firing = h.advance(240000); await h.settle();
   let forwarded = false; const input = h.emit('prompt.submit', {}).then(() => { forwarded = true; });
@@ -152,15 +152,15 @@ test.each(['session.compact', 'classic.PostModelSwitch', 'session.end'])('old ma
   expect(h.pending).toHaveLength(0); expect((await h.command('status')).text).toContain('no main request');
 });
 test('agent-list failure keeps tracked work and reports refinement failure without failing a poke', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm();
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm();
   h.engine.agent.list = async () => { throw new Error('roster unavailable'); }; await h.advance(240000);
   expect(h.submits).toHaveLength(1); expect(h.rows().some((r: any) => r.event === 'agent-list-failed')).toBe(true);
 });
 test.each(['clear', 'resume'])('continuing %s separates identity, rows and observed TTL', async reason => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000); await h.pokeReply();
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000); await h.pokeReply();
   h.id = 'session-2'; await h.emit('session.end', { reason }, { sessionId: h.id }); await h.step(); await h.stop();
   expect(h.snapshot('session-2')).toBeDefined();
-  expect(h.rows().some((r: any) => r.event === 'poke')).toBe(false); expect(h.status).toContain('waiting on');
+  expect(h.writes.map(text => JSON.parse(text)).some(row => row.session === 'session-2' && row.detail.event === 'poke')).toBe(false); expect(h.status).toContain('waiting on');
 });
 test('bad launch variables remain observable after normal status painting', async () => {
   const h = new Harness({}, { CACHE_KEEPWARM_MAX_POKES: 'bad' }); await h.arm();
@@ -174,25 +174,10 @@ test('status off paints no waiting text, while a bad option stays visible', asyn
   expect(bad.status).toContain('CACHE_KEEPWARM_MAX_POKES'); expect(bad.status).not.toContain('waiting on');
 });
 test('a poke completing after its session ended is never charged into the next one', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000);
+  const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000);
   h.id = 'session-2'; await h.emit('session.end', { reason: 'clear' }, { sessionId: h.id });
   await h.emit('turn.complete', { turnId: 'poke-1', reason: 'answer', durationMs: 100, usage: h.pokeUsage, answer: 'waiting' });
   expect((await h.command('status')).text).toContain('session 0 warms');
-});
-const enoent = (path: string) => { throw new Error(`ENOENT: no such file or directory, stat '${path}'`); };
-test('a link or special file at the log target is refused visibly and never written', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' });
-  h.statImpl = async path => path.endsWith('.jsonl') ? { kind: 'other', isLink: true, size: 0, mtimeMs: 0 } : enoent(path);
-  await h.arm(); await h.advance(240000);
-  expect(h.submits).toHaveLength(1); expect(h.writes).toHaveLength(0);
-  expect(h.status).toContain('log write refused (log target is a link or not a regular file)');
-});
-test('a log directory moved after the first write is refused, and writes land under the pinned real path', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); let stats = 0;
-  h.statImpl = async path => path === 'logs' ? { kind: 'dir', isLink: false, size: 0, mtimeMs: 0, realPath: stats++ === 0 ? '/w/logs' : '/w/moved' } : enoent(path);
-  await h.arm();
-  expect(h.paths).toHaveLength(1); expect(h.paths[0]).toMatch(/^\/w\/logs\/session-1\.[0-9a-f-]{36}\.jsonl$/);
-  expect(h.status).toContain('log write refused (log directory moved)');
 });
 test('two processes on one session keep both actors\' snapshots; a later resume restores the newest', async () => {
   const shared = new Map<string, unknown>();
