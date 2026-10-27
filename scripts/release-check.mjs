@@ -7,10 +7,9 @@ try {
   const json = path => JSON.parse(readFileSync(join(root, path), 'utf8'));
   const version = json('package.json').version;
   const plugin = json('plugins/cache-keepwarm/.claude-plugin/plugin.json');
-  const entry = json('.claude-plugin/marketplace.json').plugins.find(p => p.name === 'cache-keepwarm');
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
   const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
-  if (!/^\d+\.\d+\.\d+$/.test(version) || plugin.version !== version || entry?.version !== version || !readme.includes(`version-${version}-`) || !changelog.includes(`## [${version}]`)) throw new Error('version mismatch across package/plugin/marketplace/README/CHANGELOG');
+  if (!/^\d+\.\d+\.\d+$/.test(version) || plugin.version !== version || !readme.includes(`version-${version}-`) || !changelog.includes(`## [${version}]`)) throw new Error('version mismatch across package/plugin/README/CHANGELOG');
   if (process.env.GITHUB_REF_NAME && process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `cache-keepwarm--v${version}`) throw new Error('tag does not match version');
   const base = process.env.RELEASE_BASE_VERSION;
   if (base !== undefined) {

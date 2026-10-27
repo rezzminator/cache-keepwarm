@@ -4,6 +4,8 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+- Installs as `cache-keepwarm@professor` from the professor marketplace; the repo's own marketplace file is gone.
+
 ## [0.5.0] — 2026-10-27
 
 ### Added
