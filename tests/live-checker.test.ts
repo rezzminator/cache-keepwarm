@@ -180,8 +180,8 @@ assert 'STEPS' not in text and 'run_in_background true' not in text, text[:600]`
 test.each(['effort', 'effort-control'])('lane log routing isolates main/subagent %s producer files and passes its env', prefix => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
  root=pathlib.Path(d); prefix='${prefix}'
- (root/'s1.i1.jsonl').write_text('{"event":"LOADED"}\\n');(root/f'{prefix}.s1.jsonl').write_text('{"event":"step"}\\n');(root/f'{prefix}.s1.2.jsonl').write_text('{"event":"step","n":2}\\n');(root/f'{prefix}.s1.subagent.jsonl').write_text('{"event":"step","agent":"a"}\\n')
- assert [p.name for p in m.plugin_logs(root)]==['s1.i1.jsonl'],m.plugin_logs(root)
+ (root/'cache-keepwarm').mkdir();(root/'cache-keepwarm'/'info.jsonl').write_text('{"detail":{"event":"LOADED","at":1}}\\n');(root/'cache-keepwarm'/'errors.jsonl').write_text('{"detail":{"event":"stop","at":0}}\\n');(root/f'{prefix}.s1.jsonl').write_text('{"event":"step"}\\n');(root/f'{prefix}.s1.2.jsonl').write_text('{"event":"step","n":2}\\n');(root/f'{prefix}.s1.subagent.jsonl').write_text('{"event":"step","agent":"a"}\\n')
+ assert sorted(p.name for p in m.plugin_logs(root))==['errors.jsonl','info.jsonl'],m.plugin_logs(root); assert m.decision_rows(m.plugin_logs(root))==[{'event':'stop','at':0},{'event':'LOADED','at':1}]
  assert m.effort_rows(root)==[{'event':'step'},{'event':'step','n':2}],m.effort_rows(root); assert m.effort_rows(root,subagent=True)==[{'event':'step','agent':'a'}]
  assert m.debug_text(root)==('',False)
  seen={};m.cleanup=lambda *a:{'nativeSocketClosed':True,'ownedProcessesRemaining':[],'errors':[]}
@@ -189,7 +189,7 @@ test.each(['effort', 'effort-control'])('lane log routing isolates main/subagent
  m.run=launch
  try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','warm')
  except RuntimeError as e: assert 'stopped fixture' in str(e)
- assert seen.get('AUTO_EFFORT_LOG_FILE')==str(root/'out/warm/effort.jsonl'),seen.get('AUTO_EFFORT_LOG_FILE')
+ assert seen.get('PLUGIN_LOG_DIR')==str(root/'out/warm'),seen.get('PLUGIN_LOG_DIR'); assert seen.get('AUTO_EFFORT_LOG_FILE')==str(root/'out/warm/effort.jsonl'),seen.get('AUTO_EFFORT_LOG_FILE')
  assert seen.get('AUTO_EFFORT_CONTROL_LOG_FILE')==str(root/'out/warm/effort-control.jsonl'),seen.get('AUTO_EFFORT_CONTROL_LOG_FILE'); assert seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')=='false',seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
  for p in root.glob('effort*.jsonl'): p.unlink()
  try: m.effort_rows(root)

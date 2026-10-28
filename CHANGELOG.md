@@ -4,6 +4,16 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+### Changed
+
+- The decision log follows the plugin log contract: it writes `errors.jsonl`, `warnings.jsonl` and `info.jsonl` under `$PLUGIN_LOG_DIR/cache-keepwarm` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/cache-keepwarm/logs`, in rows of `ts`, `plugin`, `level`, `event`, `msg`, `where`, `session` and `detail` (the old row is the `detail`), directory `0700`, files `0600`, at most 4096 bytes a row, a level file past 20 MiB moved to `.1` with a `log-capped` row. It is on by default and appends, where the old log rewrote one `{session id}.{instance}.jsonl` of at most 500 rows.
+- The screen shows only errors and one line per failing streak (the log is off or failing), re-armed by the next successful write. A sub-agent poke that did not settle is a warning row, no longer a toast.
+
+### Removed
+
+- The `logDir` option, `CACHE_KEEPWARM_LOG_DIR` and the `logDir` `userConfig` key: a plugin-specific location must not override `PLUGIN_LOG_DIR`. To migrate, set `PLUGIN_LOG_DIR` to the directory that held the logs; they now sit in its `cache-keepwarm` subdirectory.
+- The log directory pinning and the link/leaf refusals (`log directory moved`, `log target is a link or not a regular file`): the append script creates the directory `0700` and appends to its own level files.
+
 ## [0.5.0] — 2026-10-27
 
 ### Added

@@ -7,7 +7,8 @@ import { budgetLedger, closeLedger, emptySessionLedger, recordWarm, recordOutcom
 import { decideWarm, type Decision, type ReasonCode } from '../src/decision.ts';
 import { parseControl, effectiveEnabled } from '../src/control.ts';
 import { pickRestore, snapshotSession, sessionKey, sessionPrefix, staleKeys, type Anchor } from '../src/resume.ts';
-import { appendLog, logFileName, logBase, leafRefusal, type LogRow, type LogStat } from '../src/log.ts';
+import { metaRow, type LogRow } from '../src/log.ts';
+import { PluginLogQueue, levelRow, pluginLogDir, type Level } from '../src/plugin-log.ts';
 import { compactFacts, compactOutcome, compactReset } from '../src/compact.ts';
 import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/pokes.ts';
 import { pokeMessage, formatWaiting, formatStopped, formatState, sessionState, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
@@ -16,9 +17,9 @@ type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: n
  * resolved, which Claude Code does when the poke's turn has started, so an unbound poke binds to the next main step. */
 type Poke = { text: string; episode: Episode; sessionId: string; turnId?: string; entered?: boolean };
 type WarmCharge = { a: SubState; epoch: number; at: number; text: string; wake: number; turnId?: string; episode: NonNullable<SubState['episode']>; sessionId: string; owner?: State };
-type State = { stateDir: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; rows: LogRow[]; writes: Promise<void>; stores: Promise<void>; instance: string; logPinned: string | null; logFailed: boolean; logError?: string; inactive?: boolean; ended?: EndedItem; detail?: string };
+type State = { stateDir: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; plog: PluginLogQueue; stores: Promise<void>; instance: string; logError?: string; inactive?: boolean; ended?: EndedItem; detail?: string };
 async function readOptionEnv($: EngineInterface) {
-  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_LOG_DIR: await $.env.get('CACHE_KEEPWARM_LOG_DIR'), CACHE_KEEPWARM_STATUS: await $.env.get('CACHE_KEEPWARM_STATUS') };
+  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_STATUS: await $.env.get('CACHE_KEEPWARM_STATUS') };
 }
 async function readTtlEnv($: EngineInterface): Promise<TtlEnv> { return { FORCE_PROMPT_CACHING_5M: await $.env.get('FORCE_PROMPT_CACHING_5M'), CLAUDE_CODE_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'), CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'), ENABLE_PROMPT_CACHING_1H: await $.env.get('ENABLE_PROMPT_CACHING_1H') }; }
 function enabled(s: State) { return effectiveEnabled(s.options.enabled, s.override); }
@@ -69,30 +70,21 @@ function cancel($: EngineInterface, s: State, reason: ReasonCode, closing = fals
 async function persist($: EngineInterface, s: State) {
   if (!s.id) return;
   const key = sessionKey(s.id, s.instance), data = snapshotSession({ sessionId: s.id, savedAt: s.now, anchor: s.anchor, ledger: s.session });
-  s.stores = s.stores.then(() => $.store.set(key, data)).catch(error => { $.ui.toast(`cache-keepwarm · store write failed (${String(error)})`); });
+  s.stores = s.stores.then(() => $.store.set(key, data)).catch(error => plog($, s, 'error', 'store-write-failed', `store write failed (${String(error)})`, 'hooks/cache-keepwarm.ts#persist'));
   await s.stores;
 }
+/** A decision row: an error row for a failed poke, timer or inventory, else info; it never reaches the screen, the status shows a stop. */
 async function log($: EngineInterface, s: State, event: string, reason = s.reason, usage?: Usage, episode = s.episode, row?: LogRow, extra?: Partial<LogRow>) {
-  s.rows = appendLog(s.rows, { ...(row ?? { at: s.now, ...(s.anchor ? { anchorAt: s.anchor.at } : {}), event, epoch: episode?.epoch ?? s.epoch, items: episode?.items ?? [], ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: episode?.context ?? s.anchor?.context ?? null, spent: episode?.spent ?? 0, reason, ...(usage ? { usage } : {}), ...(episode ? { ledger: budgetLedger({ context: episode.context, ttl: s.ttl.ttl, spent: episode.spent, warms: episode.warms }), warms: episode.warms, pokes: { count: pokesFor(s.pokes, pokeKey(episode.items.map(i => i.id))).count, max: s.options.maxPokes } } : {}), session: s.session }), ...extra });
-  if (!s.options.logDir || !s.id) return;
-  const logId = s.id, dir = s.options.logDir.replace(/\/$/, ''), name = logFileName(s.id, s.instance), text = s.rows.map(r => JSON.stringify(r)).join('\n') + '\n';
-  s.writes = s.writes.then(() => writeLog($, s, logId, dir, name, text)).catch(error => { logFault($, s, logId, `log write failed (${String(error)})`); });
-  await s.writes;
+  const r = metaRow({ ...(row ?? { at: s.now, ...(s.anchor ? { anchorAt: s.anchor.at } : {}), event, epoch: episode?.epoch ?? s.epoch, items: episode?.items ?? [], ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: episode?.context ?? s.anchor?.context ?? null, spent: episode?.spent ?? 0, reason, ...(usage ? { usage } : {}), ...(episode ? { ledger: budgetLedger({ context: episode.context, ttl: s.ttl.ttl, spent: episode.spent, warms: episode.warms }), warms: episode.warms, pokes: { count: pokesFor(s.pokes, pokeKey(episode.items.map(i => i.id))).count, max: s.options.maxPokes } } : {}), session: s.session }), ...extra });
+  const failed = r.event === 'agent-list-failed' || r.reason === 'poke-failed' || r.reason === 'timer-failed' || r.reason === 'inventory-unknown';
+  await plog($, s, failed ? 'error' : 'info', r.event, r.reason ? `${r.event}: ${r.reason}` : r.event, 'hooks/cache-keepwarm.ts#log', { ...r }, false);
 }
-function logFault($: EngineInterface, s: State, logId: string, message: string) {
-  if (s.id !== logId || s.logFailed) return;
-  s.logFailed = true; s.logError = message; $.ui.toast(`cache-keepwarm · ${message}`); if (!s.inactive) paint($, s);
-}
-async function statOrNull($: EngineInterface, path: string, resolve: boolean): Promise<LogStat | null> {
-  try { return await $.fs.stat(path, { resolve }); }
-  catch (error) { if (/ENOENT/.test(String(error))) return null; throw error; }
-}
-async function writeLog($: EngineInterface, s: State, logId: string, dir: string, name: string, text: string) {
-  const base = logBase({ dir, stat: await statOrNull($, dir, true), pinned: s.logPinned });
-  if (!base.ok) { logFault($, s, logId, `log write refused (${base.reason})`); return; }
-  const path = `${base.base}/${name}`, refusal = leafRefusal(await statOrNull($, path, false));
-  if (refusal) { logFault($, s, logId, `log write refused (${refusal})`); return; }
-  s.logPinned = base.pinned; await $.fs.write(path, text);
+/** The one plugin-log write: an error is also shown on screen, a warning or info row never is. */
+async function plog($: EngineInterface, s: State, level: Level, event: string, msg: string, where: string, detail: Record<string, unknown> = {}, show = level === 'error') {
+  if (show) $.ui.toast(`cache-keepwarm · ${msg}`);
+  s.plog.add(levelRow({ plugin: 'cache-keepwarm', level, event: event.toLowerCase(), msg, where, ...(s.id ? { session: s.id } : {}), detail }, Date.now()));
+  const flushed = await s.plog.flush(argv => $.process.run(argv, { timeoutMs: 5000 }), line => { s.logError = line; $.ui.toast(`cache-keepwarm · ${line}`); if (!s.inactive) paint($, s); });
+  if (!flushed.error && s.logError) { s.logError = undefined; if (!s.inactive) paint($, s); }
 }
 async function restore($: EngineInterface, s: State, prune: boolean) {
   try {
@@ -102,8 +94,8 @@ async function restore($: EngineInterface, s: State, prune: boolean) {
     if (prune) for (const key of stale) await $.store.delete(key);
     const prefix = sessionPrefix(s.id), restored = pickRestore(entries.filter(e => e.key.startsWith(prefix) && !stale.has(e.key)).map(e => e.value), { sessionId: s.id, now: s.now });
     if (restored.kind === 'restored') { s.anchor = restored.anchor; s.session = restored.ledger; s.reason = 'resumed'; }
-    else if (restored.kind === 'rejected') $.ui.toast(`cache-keepwarm · resume refused (${restored.reason})`);
-  } catch (error) { $.ui.toast(`cache-keepwarm · restore failed (${String(error)})`); }
+    else if (restored.kind === 'rejected') await plog($, s, 'error', 'resume-refused', `resume refused (${restored.reason})`, 'hooks/cache-keepwarm.ts#restore');
+  } catch (error) { await plog($, s, 'error', 'restore-failed', `restore failed (${String(error)})`, 'hooks/cache-keepwarm.ts#restore'); }
 }
 function queueLog($: EngineInterface, s: State, event: string) { void log($, s, event).catch(error => { $.ui.toast(`cache-keepwarm · logging failed (${String(error)})`); }); }
 function decision(s: State, epoch: number, fault?: 'poke-failed' | 'timer-failed'): Decision {
@@ -226,7 +218,7 @@ async function fireSub($: EngineInterface, s: State, a: SubState, epoch: number)
     a.pokes = pokeSent(a.pokes, subKey(a));
     const text = pokeMessage({ n: a.pokes.count, max: s.options.maxPokes, now: s.now, items: [...a.owned.values()].map(i => ({ ...i, firstSeenAt: a.seen.get(i.id) ?? s.now })) });
     a.pending = { text }; s.charges.set(a.id, { a, epoch, at: s.now, text, wake: subWake(s, a), episode: a.episode!, sessionId: s.id });
-    a.guard = $.clock.every(60000, () => { if (a.epoch === epoch && a.pending) { $.ui.toast('cache-keepwarm · sub-agent poke did not settle; episode stopped'); endSub(s, a); } });
+    a.guard = $.clock.every(60000, () => { if (a.epoch === epoch && a.pending) { void plog($, s, 'warning', 'sub-agent-poke-unsettled', 'sub-agent poke did not settle; episode stopped', 'hooks/cache-keepwarm.ts#armSub', { agentId: a.id }); endSub(s, a); } });
     void logSub($, s, a, 'admit', d.reason).catch(error => { $.ui.toast(`cache-keepwarm · sub-agent log failed (${String(error)})`); });
     const sent = await $.session.send({ to: { agentId: a.id }, text });
     if (!sent.isDelivered && a.epoch === epoch) { s.charges.delete(a.id); a.pokes = before; $.ui.toast(`cache-keepwarm · sub-agent send refused (${sent.reason})`); await logSub($, s, a, 'stop', 'poke-failed'); if (a.epoch === epoch) endSub(s, a); }
@@ -252,14 +244,14 @@ async function completeSub($: EngineInterface, s: State, a: SubState, turnId: st
 
 async function toggle($: EngineInterface, s: State, on: boolean) { endSubs(s); s.override = on; cancel($, s, on ? 'idle' : 'off'); s.typing = false; s.now = await $.clock.now(); await log($, s, on ? 'on' : 'cancel'); paint($, s); await s.stateWrites; }
 export const register: Register = (on, options) => {
-  const s: State = { stateDir: '', stateWrites: Promise.resolve(), stateLast: '', charges: new Map(), subagents: new Map(), options: resolveOptions(options, {}), config: options, ttlEnv: {}, ttl: { ttl: '5m', source: 'assumed' }, observed: null, anchor: null, override: null, busy: false, typing: false, epoch: 0, inFlight: false, pokes: null, episode: null, closing: null, seen: new Map(), reason: 'idle', now: 0, nextAt: 0, id: '', session: emptySessionLedger(), lastOutcome: null, rows: [], writes: Promise.resolve(), stores: Promise.resolve(), instance: crypto.randomUUID(), logPinned: null, logFailed: false };
+  const s: State = { stateDir: '', stateWrites: Promise.resolve(), stateLast: '', charges: new Map(), subagents: new Map(), options: resolveOptions(options, {}), config: options, ttlEnv: {}, ttl: { ttl: '5m', source: 'assumed' }, observed: null, anchor: null, override: null, busy: false, typing: false, epoch: 0, inFlight: false, pokes: null, episode: null, closing: null, seen: new Map(), reason: 'idle', now: 0, nextAt: 0, id: '', session: emptySessionLedger(), lastOutcome: null, plog: new PluginLogQueue(undefined, 'cache-keepwarm'), stores: Promise.resolve(), instance: crypto.randomUUID() };
   on('session.start', async ($, e, next) => {
-    departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.override = null; s.anchor = null; s.observed = null; s.busy = false; s.typing = false; s.closing = null; s.seen.clear(); s.session = emptySessionLedger(); s.lastOutcome = null; s.rows = []; s.logFailed = false; s.logError = undefined;
-    s.options = resolveOptions(options, await readOptionEnv($)); s.ttlEnv = await readTtlEnv($); s.ttl = resolveTtl(s.ttlEnv, null); s.id = await $.session.id(); s.now = await $.clock.now();
+    departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.override = null; s.anchor = null; s.observed = null; s.busy = false; s.typing = false; s.closing = null; s.seen.clear(); s.session = emptySessionLedger(); s.lastOutcome = null; s.logError = undefined;
+    s.options = resolveOptions(options, await readOptionEnv($)); s.plog = new PluginLogQueue(pluginLogDir(await $.env.get('PLUGIN_LOG_DIR'), await $.env.get('HOME'), 'cache-keepwarm'), 'cache-keepwarm'); s.ttlEnv = await readTtlEnv($); s.ttl = resolveTtl(s.ttlEnv, null); s.id = await $.session.id(); s.now = await $.clock.now();
     s.stateDir = (await $.env.get('CACHE_KEEPWARM_STATE_DIR'))?.trim() || `${(await $.env.get('XDG_STATE_HOME'))?.trim() || `${await $.env.get('HOME')}/.local/state`}/cache-keepwarm/sessions`; s.stateLast = '';
     $.command.register({ name: 'keepwarm', description: 'Control warming — /keepwarm [on|off|status] for this chat only; no argument shows state and spend.', argumentHint: '[on|off|status]', immediate: true });
     await restore($, s, true);
-    if (s.options.bad.length) $.ui.toast(`cache-keepwarm · bad options: ${s.options.bad.join(', ')}`);
+    if (s.options.bad.length) await plog($, s, 'error', 'bad-options', `bad options: ${s.options.bad.join(', ')}`, 'hooks/cache-keepwarm.ts#session.start', { bad: s.options.bad });
     await log($, s, 'LOADED'); paint($, s); await s.stateWrites; return next(e);
   });
   on('prompt.submit', async ($, e, next) => {
@@ -320,8 +312,8 @@ export const register: Register = (on, options) => {
       if (charge && !charge.turnId) {
         let messages;
         try { messages = await $.session.messages({ agentId: e.agentId }); }
-        catch (error) { $.ui.toast(`cache-keepwarm · sub-agent receipt failed (${String(error)})`); endSub(s, a); return result; }
-        if (!Array.isArray(messages)) { $.ui.toast(`cache-keepwarm · sub-agent receipt refused (${messages.deny})`); endSub(s, a); }
+        catch (error) { await plog($, s, 'error', 'sub-agent-receipt-failed', `sub-agent receipt failed (${String(error)})`, 'hooks/cache-keepwarm.ts#receipt', { agentId: a.id }); endSub(s, a); return result; }
+        if (!Array.isArray(messages)) { await plog($, s, 'error', 'sub-agent-receipt-refused', `sub-agent receipt refused (${messages.deny})`, 'hooks/cache-keepwarm.ts#receipt', { agentId: a.id }); endSub(s, a); }
         else if (warmReceipt(messages, charge.text).own) {
           charge.turnId = e.turnId;
           if (a.epoch === charge.epoch && e.usage) a.anchor = { at: charge.at, context: e.usage.input_tokens + e.usage.cache_read_input_tokens + e.usage.cache_creation_input_tokens, tail: e.usage.output_tokens, model: e.usage.model, ttl: a.ttl.ttl, ttlSource: a.ttl.source };
@@ -354,7 +346,7 @@ export const register: Register = (on, options) => {
   on('classic.PostModelSwitch', async ($, e, next) => { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); await log($, s, 'model-switch'); return next(e); });
   on('session.end', async ($, e, next) => {
     departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.closing = null; s.override = null; publishState($, s, true); await s.stateWrites; await persist($, s);
-    s.anchor = null; s.seen.clear(); s.id = ''; s.session = emptySessionLedger(); s.busy = false; s.typing = false; s.lastOutcome = null; s.observed = null; s.rows = []; s.logFailed = false; s.logError = undefined; s.ttl = resolveTtl(s.ttlEnv, null);
+    s.anchor = null; s.seen.clear(); s.id = ''; s.session = emptySessionLedger(); s.busy = false; s.typing = false; s.lastOutcome = null; s.observed = null; s.logError = undefined; s.ttl = resolveTtl(s.ttlEnv, null);
     const result = await next(e);
     if (e.reason === 'clear' || e.reason === 'resume') {
       s.id = result.sessionId; s.now = await $.clock.now(); s.stateLast = '';

@@ -80,7 +80,12 @@ def owned_socket(text):
     return None
 
 def plugin_logs(directory):
-    return [p for p in directory.glob('*.jsonl') if not p.name.startswith(('effort.', 'effort-control.'))]
+    # The lane's PLUGIN_LOG_DIR is its directory, so the plugin's level files sit in its cache-keepwarm subdirectory.
+    return list((directory / 'cache-keepwarm').glob('*.jsonl'))
+
+def decision_rows(paths):
+    # A level row's detail is the decision row; the rows of every level file merge by their own clock.
+    return sorted((row['detail'] for path in paths for row in rows(path)), key=lambda row: row.get('at', 0))
 
 def effort_rows(directory, subagent=False):
     # Both producers insert session/segment before .jsonl; the new controller also writes .subagent.jsonl.
@@ -190,7 +195,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
     env = dict(os.environ)
     # Claude Code's prompt suggestion sends the conversation after each turn, writing its cache (measured surviving a
     # 12-minute control wait): off, so the control lane stays cold and the warm lane's reads are the plugin's own.
-    env.update(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='false', CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)] if mode != 'state' else [str(ROOT / 'plugins/cache-keepwarm')]), CACHE_KEEPWARM_STATE_DIR=str(directory / 'sessions'), CACHE_KEEPWARM_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
+    env.update(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='false', CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)] if mode != 'state' else [str(ROOT / 'plugins/cache-keepwarm')]), CACHE_KEEPWARM_STATE_DIR=str(directory / 'sessions'), PLUGIN_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
     # A lane's own overrides (a poke cap, the sub-agent context gate) reach only its chat.
     env.update(extra_env or {})
     evidence = {'mode': mode, 'log': [], 'transcript': []}
@@ -269,8 +274,8 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             checker.validity(evidence, require_debug=False)
             evidence['debug'], evidence['debugWritten'] = debug_text(directory)
             logs = plugin_logs(directory)
-            if len(logs) == 1:
-                evidence['log'] = rows(logs[0])
+            if logs:
+                evidence['log'] = decision_rows(logs)
             checker.validity(evidence)
             evidence['compactEvents'] = checker.compactions(evidence['log'])[1]
             void = checker.compaction_verdict(evidence['log'])
@@ -297,9 +302,9 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
         else:
             raise RuntimeError('NOT RUN: timed out waiting for real return')
         logs = plugin_logs(directory)
-        if len(logs) != 1:
-            raise RuntimeError('ERROR need exactly one plugin decision log')
-        evidence['log'] = rows(logs[0])
+        if not logs:
+            raise RuntimeError('ERROR need the plugin decision log')
+        evidence['log'] = decision_rows(logs)
         evidence['compactEvents'] = checker.compactions(evidence['log'])[1]
         evidence['effort'] = effort_rows(directory)
         evidence['subagentEffort'] = effort_rows(directory, subagent=True)
