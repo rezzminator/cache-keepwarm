@@ -14,8 +14,8 @@ with tempfile.TemporaryDirectory() as d:
  def now(): clock[0]+=100;return clock[0]
  m.time.monotonic=now;m.time.sleep=lambda seconds: None
  def run(args,**kwargs):
-  if args[:3]==['pfm','chat','new']:
-   (project/'thread.jsonl').write_text('{}\\n');return types.SimpleNamespace(returncode=0,stdout='cc\\tname\\towned-socket',stderr='')
+  if 'new-session' in args:
+   (project/'thread.jsonl').write_text('{}\\n');return types.SimpleNamespace(returncode=0,stdout='',stderr='')
   return types.SimpleNamespace(returncode=0 if 'capture-pane' in args else 1 if args[0]=='tmux' else 0,stdout='',stderr='')
  m.run=run
  class Journal:

@@ -237,7 +237,7 @@ The unit gates (decisions, and the function-hook tests on a stand-in and on the 
 
 `CLAUDE.md` is the testing manual.
 
-The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the chat launcher `pfm`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. A capture checks that the waiting status cleared.
+The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. A capture checks that the waiting status cleared. Each lane starts its own `claude` detached in its own tmux server (socket `kw-{lane}-{id}`), with the lane's environment and Claude Code's `CLAUDE_CODE_PROMPT_CACHE_TTL` set to the lane's TTL, and ends it by killing that server and every process carrying the lane's marker; a run stopped by SIGKILL leaves it running, listed by `ls ${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/ | grep kw-` and ended with `tmux -L {socket} kill-server`.
 
 ## Credits
 

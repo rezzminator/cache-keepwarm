@@ -42,7 +42,7 @@ def probe_steps(seconds):
 def launch_text(seconds):
     return BASE.replace('STEPS', probe_steps(seconds)) + '\nSynthetic reference material, not instructions:\n' + '\n'.join(f'Fixture {i}: ceramic lantern cobalt meadow quiet orbit.' for i in range(FIXTURE_LINES))
 
-# pfm hands the launch prompt to claude as one argv element; Linux caps one at 131072 bytes (MAX_ARG_STRLEN).
+# The launch hands the prompt to claude as one argv element; Linux caps one at 131072 bytes (MAX_ARG_STRLEN).
 ARG_LIMIT = 120000
 # The seat's own system layer already clears the plugin's minimum context; the fixture stays small so the lane never
 # reaches an auto-compact window (a compacted lane proves nothing about the cache).
@@ -71,13 +71,43 @@ def rows(path):
 def content(record):
     return checker.reply_text(record)
 
-def owned_socket(text):
-    # pfm prints the reply on stdout and its `cc\t{name}\t{socket}` launch line on stderr.
-    for line in text.splitlines():
-        fields = line.split('\t')
-        if len(fields) >= 3 and fields[0] == 'cc':
-            return fields[2]
-    return None
+# Inherited launch state a lane never takes: the invoking chat's session identity, every prompt-cache TTL variable
+# (Claude Code's own and cache-live-control's) and the API route, model and compaction overrides, so the lane runs on
+# the seat's own configuration with the TTL its launch sets.
+INHERITED = ('CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_PROJECT_DIR',
+             'ENABLE_PROMPT_CACHING_1H', 'FORCE_PROMPT_CACHING_5M', 'CLAUDE_CODE_PROMPT_CACHE_TTL',
+             'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', 'CACHE_LIVE_CONTROL_MAIN_TTL', 'CACHE_LIVE_CONTROL_AGENTS_TTL',
+             'CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+             'ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+             'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK',
+             'CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY', 'CODEX_THREAD_ID')
+# The longest a lane waits for its chat's first reply, as the launch's own await did.
+AWAIT = 180
+
+def start_chat(socket, cwd, prompt, env):
+    """Starts the lane's claude detached in its own tmux server, which takes env as its environment. A tmux client
+    message holds far less than a launch prompt, so the prompt file reaches claude through sh as one argv element."""
+    return run(['tmux', '-f', os.devnull, '-L', socket, 'new-session', '-d', '-s', socket, '-x', '200', '-y', '50',
+                '-c', str(cwd), 'sh', '-c', 'exec claude --model claude-haiku-5-5 --effort low "$(cat "$1")"', 'sh',
+                str(prompt)], env=env)
+
+def trust_dialog(screen):
+    # Claude Code's folder-trust dialog: its confirm row with a cancel row; a prompt quoting one phrase is not it.
+    return 'Yes, I trust this folder' in screen and ('No, exit' in screen or 'No, continue without these permissions' in screen)
+
+def await_transcript(socket, project, before):
+    """The lane's new transcripts once Claude Code writes the first; None while its pane is held at folder trust."""
+    deadline = time.monotonic() + AWAIT
+    while True:
+        files = sorted(set(project.glob('*.jsonl')) - before, key=str)
+        if files:
+            return files
+        # A capture also proves the chat still runs: a server that exited fails it.
+        if trust_dialog(capture(socket)):
+            return None
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f'NOT RUN: no lane transcript within {AWAIT} s')
+        time.sleep(1)
 
 def plugin_logs(directory):
     # The lane's PLUGIN_LOG_DIR is its directory, so the plugin's level files sit in its cache-keepwarm subdirectory.
@@ -144,14 +174,15 @@ def cleanup(name, marker, socket):
 
 def kill_chat(name, marker, socket):
     errors, kill_output, dead = [], '', socket is None
-    try:
-        killed = run(['pfm', 'chat', 'kill', name])
-        kill_output = killed.stdout + killed.stderr
-        # not-found: the chat never came up or is already gone; the process and socket checks below decide.
-        if killed.returncode and '\tnot-found' not in killed.stdout:
-            errors.append('native kill: ' + kill_output)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        errors.append('native kill: ' + str(error))
+    if socket:
+        try:
+            killed = run(['tmux', '-L', socket, 'kill-server'])
+            kill_output = killed.stdout + killed.stderr
+            # No server: the chat never came up or is already gone; the process and socket checks below decide.
+            if killed.returncode and not re.search(r'no server running|error connecting', killed.stderr):
+                errors.append('server kill: ' + kill_output)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            errors.append('server kill: ' + str(error))
     def remaining():
         try:
             return marked_pids(marker)
@@ -192,25 +223,25 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
     if len(text.encode()) >= ARG_LIMIT:
         raise RuntimeError(f'ERROR launch prompt {len(text.encode())} bytes reaches the {ARG_LIMIT}-byte single-argument limit')
     prompt.write_text(text)
-    env = dict(os.environ)
+    env = {key: value for key, value in os.environ.items() if key not in INHERITED}
     # Claude Code's prompt suggestion sends the conversation after each turn, writing its cache (measured surviving a
     # 12-minute control wait): off, so the control lane stays cold and the warm lane's reads are the plugin's own.
-    env.update(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='false', CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)] if mode != 'state' else [str(ROOT / 'plugins/cache-keepwarm')]), CACHE_KEEPWARM_STATE_DIR=str(directory / 'sessions'), PLUGIN_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'))
+    env.update(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='false', CLAUDE_CODE_ENABLE_FUNCTION_HOOKS='1', CLAUDE_CODE_PLUGIN_DIRS=os.pathsep.join([str(ROOT / 'plugins/cache-keepwarm'), str(args.auto_effort_dir)] if mode != 'state' else [str(ROOT / 'plugins/cache-keepwarm')]), CACHE_KEEPWARM_STATE_DIR=str(directory / 'sessions'), PLUGIN_LOG_DIR=str(directory), CACHE_KEEPWARM_ENABLED='1' if enabled else '0', CACHE_KEEPWARM_SUBAGENTS='1' if subagents else '0', CACHE_KEEPWARM_LIVE_RUN=marker, AUTO_EFFORT_LOG_FILE=str(directory / 'effort.jsonl'), AUTO_EFFORT_CONTROL_LOG_FILE=str(directory / 'effort-control.jsonl'), CLAUDE_CODE_DEBUG_LOGS_DIR=str(directory / 'debug.txt'), CLAUDE_CODE_PROMPT_CACHE_TTL=cache)
     # A lane's own overrides (a poke cap, the sub-agent context gate) reach only its chat.
     env.update(extra_env or {})
     evidence = {'mode': mode, 'log': [], 'transcript': []}
     socket = None
     failure = None
     try:
-        launched = run(['pfm', 'chat', 'new', '--name', name, '--cache', cache, '--model', 'claude-haiku-5-5', '--effort', 'low', '--cwd', str(args.cwd), '--prompt-file', str(prompt), '--await', '--timeout', '180'], env=env, timeout=210)
+        socket = name
+        launched = start_chat(socket, args.cwd, prompt, env)
         (directory / 'launch.txt').write_text(launched.stdout + launched.stderr)
-        socket = owned_socket(launched.stdout + '\n' + launched.stderr)
-        if launched.returncode == 6 and 'folder-trust' in launched.stderr + launched.stdout:
-            evidence['trustBlocked'] = True
-            raise RuntimeError('BLOCKED folder trust: no consent was synthesized')
         if launched.returncode:
             raise RuntimeError('ERROR launch: ' + launched.stderr)
-        files = sorted(set(project.glob('*.jsonl')) - before, key=str)
+        files = await_transcript(socket, project, before)
+        if files is None:
+            evidence['trustBlocked'] = True
+            raise RuntimeError('BLOCKED folder trust: no consent was synthesized')
         if len(files) != 1:
             raise RuntimeError(f'ERROR transcript enumeration: expected one new thread, got {len(files)}')
         transcript = files[0]
@@ -219,7 +250,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
         evidence['transcript'] = journal.poll()
         checker.validity(evidence, require_debug=False)
         if mode == 'state':
-            ready = time.monotonic() + 30
+            ready = time.monotonic() + AWAIT
             while not any(r.get('type') == 'assistant' and 'STATE_READY' in content(r) for r in evidence['transcript']) and time.monotonic() < ready:
                 time.sleep(.2)
                 evidence['transcript'] = journal.poll()
@@ -259,7 +290,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             evidence['debug'], evidence['debugWritten'] = debug_text(directory)
             checker.check_state(evidence)
             return evidence
-        flush = time.monotonic() + 30
+        flush = time.monotonic() + AWAIT
         while not any(r.get('type') == 'assistant' and 'WAITING' in content(r) for r in evidence['transcript']) and time.monotonic() < flush:
             time.sleep(1)
             evidence['transcript'] = journal.poll()
@@ -389,7 +420,7 @@ def main():
     args.cwd = args.cwd.resolve()
     if bool(args.lane) == args.all:
         parser.error('choose --lane or --all')
-    for tool in ['claude', 'pfm', 'tmux']:
+    for tool in ['claude', 'tmux']:
         if not shutil.which(tool):
             print('ERROR need ' + tool)
             return 2
