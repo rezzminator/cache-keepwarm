@@ -25,10 +25,8 @@ test('release check verifies all public versions and names mismatches', () => {
   const run = () => spawnSync(process.execPath, [join(root, 'scripts/release-check.mjs'), '--root', dir], { encoding: 'utf8' });
   try {
     mkdirSync(join(dir, 'plugins/cache-keepwarm/.claude-plugin'), { recursive: true });
-    mkdirSync(join(dir, '.claude-plugin'));
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '0.1.0' }));
     writeFileSync(join(dir, 'plugins/cache-keepwarm/.claude-plugin/plugin.json'), JSON.stringify({ name: 'cache-keepwarm', version: '0.1.0' }));
-    writeFileSync(join(dir, '.claude-plugin/marketplace.json'), JSON.stringify({ plugins: [{ name: 'cache-keepwarm', version: '0.1.0' }] }));
     writeFileSync(join(dir, 'README.md'), 'version-0.1.0-blue');
     writeFileSync(join(dir, 'CHANGELOG.md'), '## [0.1.0] — 2026-10-17\nInitial.\n');
     expect(run().status).toBe(0);

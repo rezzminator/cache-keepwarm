@@ -6,6 +6,7 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ### Changed
 
+- Installs as `cache-keepwarm@professor` from the professor marketplace; the repo's own marketplace file is gone.
 - The decision log follows the plugin log contract: it writes `errors.jsonl`, `warnings.jsonl` and `info.jsonl` under `$PLUGIN_LOG_DIR/cache-keepwarm` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/cache-keepwarm/logs`, in rows of `ts`, `plugin`, `level`, `event`, `msg`, `where`, `session` and `detail` (the old row is the `detail`), directory `0700`, files `0600`, at most 4096 bytes a row, a level file past 20 MiB moved to `.1` with a `log-capped` row. It is on by default and appends, where the old log rewrote one `{session id}.{instance}.jsonl` of at most 500 rows.
 - The screen shows only errors and one line per failing streak (the log is off or failing), re-armed by the next successful write. A sub-agent poke that did not settle is a warning row, no longer a toast.
 

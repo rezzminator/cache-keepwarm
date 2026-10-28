@@ -40,15 +40,15 @@ Waiting sub-agents (`subagents`, on by default) have independent episodes, timer
 
 ## Install
 
-Install the released version from the public repository (the marketplace pins `main`; unreleased development is on `develop`):
+Install the released version from Professor's marketplace (unreleased development is on `develop`):
 
 ```sh
 export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
-claude plugin marketplace add rezzminator/cache-keepwarm
-claude plugin install cache-keepwarm@cache-keepwarm
+claude plugin marketplace add rezzminator/professor
+claude plugin install cache-keepwarm@professor
 ```
 
-In a chat, `/plugin install cache-keepwarm --marketplace rezzminator/cache-keepwarm` does it in one step.
+In a chat, `/plugin install cache-keepwarm --marketplace rezzminator/professor` does it in one step.
 
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` also works in the `env` block of `settings.json`. The plugin is built against the plugin types of Claude Code 2.1.302 and needs a release with function hooks; function hooks are early access and may change between releases.
 
