@@ -9,7 +9,7 @@ A Claude Code function-hooks plugin: while the main chat or a waiting sub-agent 
 - `plugins/cache-keepwarm/src/`: every decision, pure, one concept per file, no cross-imports beyond types, at most 300 lines; `decision.ts` is the one fire decision and `budget.ts` the one producer of spend, allowance and ledger.
 - `tests/`: one same-stem vitest file per `src/` file, `adapter.test.ts` (main chat) and `adapter-subagents.test.ts` over the stand-in `$` in `tests/stand-in.ts`, `live-checker.test.ts` and `live-poke.test.ts` over the shared evidence fixtures in `tests/live-fixtures.ts`; at most 300 lines each. `plugins/cache-keepwarm/tests/` holds the function-hook tests on the `claude-code/testing` kit.
 - `types/claude-code.d.ts`: the plugin API (from `/plugin-types`), the truth for every hook's shape; grep it before using an event.
-- `plugins/cache-keepwarm/.claude-plugin/plugin.json`: manifest and `userConfig`; the root `.claude-plugin/marketplace.json` makes the repo its own marketplace.
+- `plugins/cache-keepwarm/.claude-plugin/plugin.json`: manifest and `userConfig`; the plugin installs as `cache-keepwarm@professor`.
 - `scripts/live-proof.sh` drives the live lanes; `scripts/release-check.sh` checks the release.
 - `.github/workflows/release.yml`: on a pull request to `main` its `check` and `release` jobs run `make gate` and `make release`; merging that pull request runs `publish`, which tags `cache-keepwarm--vX.Y.Z` and publishes the GitHub release.
 - `.claude/agents/gitter.md`: the repository's Git writer.
@@ -56,13 +56,13 @@ A Claude Code function-hooks plugin: while the main chat or a waiting sub-agent 
 - `$` is passed only to functions declared at the top level of the hooks file and always spelled `$.noun.event(...)`, and `$.env` names are string literals: Claude Code checks this statically and otherwise loads the module with zero hooks. `npm run validate:plugin` catches it.
 - One glossary in code, tests and docs: wait, waiting item, episode, poke, request, epoch, send anchor, poke limit. No "ping", "keepalive" or "job".
 - A claim about Claude Code's behaviour in the README states what was measured; a claim not re-measured on a new release is labelled so.
-- A version bump moves `plugins/cache-keepwarm/.claude-plugin/plugin.json`, the root `.claude-plugin/marketplace.json`, `package.json` and the README badge together; installed copies update only on a new version.
+- A version bump moves `plugins/cache-keepwarm/.claude-plugin/plugin.json`, `package.json` and the README badge together; installed copies update only on a new version.
 - Public repo: no machine-absolute path, personal data or private project name in a tracked file.
 
 ## Branches and releases
 
 - `develop` is the default branch: every change lands there, by a commit or a pull request. No CI runs on a push to any branch: `.github/workflows/release.yml` runs only on a pull request to `main`. `develop` is protected by the ruleset `develop keeps its history`: never force-push or delete it.
-- `main` is release-only (ruleset `main is release-only`). It moves only by merging the `develop → main` pull request, with a merge commit and never a squash, so both branches share one history, and only after `check` and `release` pass: never a direct push, never an admin override. The marketplace installs the plugin from `main` (`git-subdir`, `ref: main`), so users only ever get a released version.
+- `main` is release-only (ruleset `main is release-only`). It moves only by merging the `develop → main` pull request, with a merge commit and never a squash, so both branches share one history, and only after `check` and `release` pass: never a direct push, never an admin override. Professor's marketplace installs the plugin from `main` (`git-subdir`, `ref: main`), so users only ever get a released version.
 - A release, in order:
   1. On `develop`: bump the version in all four places, and move `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] — date`. Every merge into `main` publishes, so a pre-release suffix (`-dev.N`, `-alpha`) becomes the real release version here.
   2. `git fetch origin main`, then `make release-check` passes.
