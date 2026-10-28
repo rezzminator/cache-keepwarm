@@ -349,7 +349,7 @@ export const register: Register = (on, options) => {
   on('classic.PostModelSwitch', async ($, e, next) => { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); await log($, s, 'model-switch'); return next(e); });
   on('session.end', async ($, e, next) => {
     departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.closing = null; s.override = null; publishState($, s, true); await s.stateWrites; await persist($, s);
-    s.anchor = null; s.seen.clear(); s.id = ''; s.session = emptySessionLedger(); s.busy = false; s.typing = false; s.lastOutcome = null; s.observed = null; s.logError = undefined; s.ttl = resolveTtl(s.ttlEnv, null);
+    s.anchor = null; s.seen.clear(); s.id = ''; s.session = emptySessionLedger(); s.busy = false; s.typing = false; s.lastOutcome = null; s.observed = null; s.ttl = resolveTtl(s.ttlEnv, null);
     const result = await next(e);
     if (e.reason === 'clear' || e.reason === 'resume') {
       s.id = result.sessionId; s.now = await $.clock.now(); s.stateLast = '';

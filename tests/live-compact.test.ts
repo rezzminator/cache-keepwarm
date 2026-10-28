@@ -8,7 +8,7 @@ function lane(compact: Record<string, unknown>) {
 spec=importlib.util.spec_from_file_location('runner',sys.argv[1]); m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 with tempfile.TemporaryDirectory() as d:
  root=pathlib.Path(d);cwd=root/'work';project=root/'.claude/projects'/m.re.sub(r'[^a-zA-Z0-9]','-',str(cwd));project.mkdir(parents=True)
- log=root/'plugin.jsonl';log.write_text(json.dumps({'detail':{'event':'LOADED','at':1}})+'\\n'+json.dumps({'detail':dict({'event':'compact','at':2},**json.loads(sys.argv[2]))})+'\\n')
+ log=root/'plugin.jsonl';log.write_text(json.dumps({'where':'hooks/cache-keepwarm.ts#log','detail':{'event':'LOADED','at':1}})+'\\n'+json.dumps({'where':'hooks/cache-keepwarm.ts#log','detail':dict({'event':'compact','at':2},**json.loads(sys.argv[2]))})+'\\n')
  m.os.environ={};m.Path.home=classmethod(lambda cls: root);m.marked_pids=lambda marker: [];m.plugin_logs=lambda directory: [log]
  clock=[0]
  def now(): clock[0]+=100;return clock[0]
