@@ -16,6 +16,10 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 - The `logDir` option, `CACHE_KEEPWARM_LOG_DIR` and the `logDir` `userConfig` key: a plugin-specific location must not override `PLUGIN_LOG_DIR`. To migrate, set `PLUGIN_LOG_DIR` to the directory that held the logs; they now sit in its `cache-keepwarm` subdirectory.
 - The log directory pinning and the link/leaf refusals (`log directory moved`, `log target is a link or not a regular file`): the append script creates the directory `0700` and appends to its own level files.
 
+### Fixed
+
+- **A cancelled log write no longer shows on screen.** When Claude Code abandons a hook mid-write, the shared plugin-log library keeps the rows for the next write, and nothing is lost; it used to print a "plugin log … failed" line. A real write failure is still said once per failing streak.
+
 ## [0.5.0] — 2026-10-27
 
 ### Added
