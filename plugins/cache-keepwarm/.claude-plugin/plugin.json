@@ -1,6 +1,6 @@
 {
   "name": "cache-keepwarm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Protect cached context — Keep main-chat and sub-agent background waits warm with visible pokes, capped per wait, under rewrite-saving budgets.",
   "license": "MIT",
   "author": {
