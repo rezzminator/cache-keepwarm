@@ -223,8 +223,8 @@ export type PluginLogRun = (argv: string[]) => Promise<{ exitCode: number; stdou
  * `plugin-log-rows-dropped` row. `error` and `screen` come once per failing streak: the cause, and the one line the
  * caller shows on screen.
  */
-/** A `$.process.run` its abandoned hook dispatch aborted: the caller retries the work on the next dispatch, nothing failed.
- * shortcut: Claude Code says so only in the message, "$.process.run(/bin/sh) aborted"; match a typed abort once it has one. */
+/** A `process.run` call its abandoned hook dispatch aborted: the caller retries the work on the next dispatch, nothing failed.
+ * shortcut: Claude Code says so only in the message, "process.run(/bin/sh) aborted"; match a typed abort once it has one. */
 export const runAborted = (cause: string): boolean => /\$\.process\.run\([^)]*\) aborted$/.test(cause);
 
 export type FlushResult = { held: number; lost: number; error?: string; screen?: string };
