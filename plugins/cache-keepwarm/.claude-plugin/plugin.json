@@ -1,6 +1,6 @@
 {
   "name": "cache-keepwarm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Protect cached context — Keep main-chat and sub-agent background waits warm with visible pokes, capped per wait, under rewrite-saving budgets.",
   "license": "MIT",
   "author": {
@@ -33,12 +33,6 @@
       "title": "Pokes per wait",
       "description": "Send at most this many keep-warm pokes to one thread while its pending items stay the same and nothing else happens; any real activity or a changed set of items starts a fresh count.",
       "default": 4
-    },
-    "logDir": {
-      "type": "string",
-      "title": "Decision log directory",
-      "description": "Optional directory for bounded metadata-only session JSONL logs; empty disables disk logging.",
-      "default": ""
     },
     "subagents": {
       "type": "boolean",

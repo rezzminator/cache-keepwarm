@@ -26,7 +26,6 @@ At most `maxPokes` pokes go to one thread while its pending items stay the same 
 | `CACHE_KEEPWARM_ENABLED` | `enabled` | `true` | Poke at all; `/keepwarm` overrides it for one chat |
 | `CACHE_KEEPWARM_MIN_CONTEXT` | `minContext` | `20000` | Smallest main-chat context in tokens worth a poke |
 | `CACHE_KEEPWARM_MAX_POKES` | `maxPokes` | `4` | Pokes per thread on one unchanged wait; an integer of at least 1 |
-| `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for a metadata-only decision log; empty writes none |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents, each poke also waking the parent for one turn; the main path is unchanged either way |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
 | `CACHE_KEEPWARM_STATUS` | `status` | `true` | Show the waiting and stopped status text under the prompt; off paints only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the JSON are unaffected |
@@ -47,6 +46,6 @@ Main-session state is published atomically to `${XDG_STATE_HOME:-$HOME/.local/st
 
 ## Install
 
-The repository is public: <https://github.com/rezzminator/cache-keepwarm>. Development is on `develop`; the marketplace ref stays `main` until a release, so 0.4.1 is not yet published and the command below installs the latest released version: `/plugin install cache-keepwarm --marketplace rezzminator/cache-keepwarm`.
+The repository is public: <https://github.com/rezzminator/cache-keepwarm>. Development is on `develop`. Install it from Professor's marketplace: `claude plugin marketplace add rezzminator/professor`, then `claude plugin install cache-keepwarm@professor`.
 
 It requires `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. A Claude Code managed by an organization skips the plugin's `classic.Stop`, `session.compact` and `classic.PostModelSwitch` hooks unless the organization lists the plugin. The root README of the repository is the full documentation, including TTL resolution, the budget ledger and every limit: <https://github.com/rezzminator/cache-keepwarm>.

@@ -2,7 +2,23 @@
 
 Every release of cache-keepwarm. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-keepwarm--v<version>`, with a GitHub release carrying the section below.
 
-## [Unreleased]
+## [0.6.0] — 2026-10-30
+
+### Changed
+
+- Installs as `cache-keepwarm@professor` from the professor marketplace; the repo's own marketplace file is gone. Migration: a `cache-keepwarm@cache-keepwarm` install gets no further updates: uninstall it, then `claude plugin marketplace add rezzminator/professor` and `claude plugin install cache-keepwarm@professor`; options saved in `settings.json` move with the id, from `pluginConfigs["cache-keepwarm@cache-keepwarm"]` to `pluginConfigs["cache-keepwarm@professor"]`.
+- The decision log follows the plugin log contract: it writes `errors.jsonl`, `warnings.jsonl` and `info.jsonl` under `$PLUGIN_LOG_DIR/cache-keepwarm` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/cache-keepwarm/logs`, in rows of `ts`, `plugin`, `level`, `event`, `msg`, `where`, `session` and `detail` (the old row is the `detail`), directory `0700`, files `0600`, at most 4096 bytes a row, a level file past 20 MiB moved to `.1`, older generations shifting up to `.5`, with a `log-capped` row. It is on by default and appends, where the old log rewrote one `{session id}.{instance}.jsonl` of at most 500 rows.
+- The screen shows only errors and one line per failing streak (the log is off or failing), re-armed by the next successful write. A failed write keeps its rows, up to 2,000, for the next write, where it used to drop them; rows let go past that are counted in a `plugin-log-rows-dropped` error row. A sub-agent poke that did not settle is a warning row, no longer a toast.
+- The live harness (`npm run live`) no longer needs a chat launcher: each lane starts its own `claude` in its own tmux server, sets the lane's TTL through Claude Code's `CLAUDE_CODE_PROMPT_CACHE_TTL`, waits on the lane transcript for the first reply, reads a folder-trust dialog from the pane as NOT RUN, and stops the chat by killing that server. It needs only `node`, `npm`, `claude`, `python3` and `tmux`.
+
+### Removed
+
+- The `logDir` option, `CACHE_KEEPWARM_LOG_DIR` and the `logDir` `userConfig` key: a plugin-specific location must not override `PLUGIN_LOG_DIR`. To migrate, set `PLUGIN_LOG_DIR` to the directory that held the logs; they now sit in its `cache-keepwarm` subdirectory.
+- The log directory pinning and the link/leaf refusals (`log directory moved`, `log target is a link or not a regular file`): the append script creates the directory `0700` and appends to its own level files.
+
+### Fixed
+
+- **A cancelled log write no longer shows on screen.** When Claude Code abandons a hook mid-write, the shared plugin-log library keeps the rows for the next write, and nothing is lost; it used to print a "plugin log … failed" line. A real write failure is still said once per failing streak.
 
 ## [0.5.0] — 2026-10-27
 

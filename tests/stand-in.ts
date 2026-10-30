@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import type { EngineInterface, On, PluginOptions } from 'claude-code';
 import { register } from '../plugins/cache-keepwarm/hooks/cache-keepwarm.ts';
 export const pokeText = (n: string, bullets: string) => `Keep-warm poke ${n}: your prompt cache was about to expire, so this message keeps it warm while you wait on:\n${bullets}\nIf any of these is stale or was started by accident, stop it now. Otherwise reply \`waiting\` and end your turn.`;
@@ -7,19 +8,19 @@ export class Harness {
   timers: { at: number; interval: number; active: boolean; fn: () => unknown }[] = [];
   messages: { role: string; text: string; toolUses: unknown[] }[] = [];
   sends: { to: { agentId: string }; text: string }[] = []; sendImpl: ((input: any) => Promise<any>) | null = null;
-  submits: { text: string; asUser?: true }[] = []; submitImpl: ((input: any) => Promise<any>) | null = null; lists = 0; writes: string[] = []; paths: string[] = []; statImpl: ((path: string, options?: unknown) => Promise<unknown>) | null = null; values = new Map<string, unknown>(); commands: unknown[] = [];
+  submits: { text: string; asUser?: true }[] = []; submitImpl: ((input: any) => Promise<any>) | null = null; lists = 0; writes: string[] = []; paths: string[] = []; realRun = false; values = new Map<string, unknown>(); commands: unknown[] = [];
   draft = ''; id = 'session-1'; env: Record<string, string> = {}; loadError: unknown;
   agents = [{ id: 'a', status: 'waiting' }]; writeError: Error | null = null; writeImpl: (() => Promise<void>) | null = null; storeError: Error | null = null;
   pokeUsage = { input_tokens: 25, output_tokens: 3, cache_read_input_tokens: 49745, cache_creation_input_tokens: 807, model: 'claude-haiku-5-5' };
   engine: EngineInterface;
   constructor(options: PluginOptions = {}, env: Record<string, string> = {}) {
-    this.env = env;
+    this.env = { HOME: '/h', ...env };
     const timer = (ms: number, fn: () => unknown, interval: number) => {
       const t = { at: this.now + ms, fn, interval, active: true }; this.timers.push(t);
       return { cancel: () => { t.active = false; } };
     };
     this.engine = {
-      plugin: { root: '/test-plugin' }, process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) },
+      plugin: { root: '/test-plugin' }, process: { run: async (argv: string[]) => argv[0] === '/bin/sh' && argv[3] === 'plugin-log' ? this.pluginLog(argv) : { exitCode: 0, stdout: '', stderr: '' } },
       env: { get: async (name: string) => this.env[name] },
       clock: { now: async () => this.now, after: (ms: number, fn: () => unknown) => timer(ms, fn, 0), every: (ms: number, fn: () => unknown) => timer(ms, fn, ms) },
       prompt: { read: async () => ({ text: this.draft }), submit: async (input: any) => { this.submits.push(input); return this.submitImpl ? this.submitImpl(input) : { text: input.text }; } },
@@ -27,7 +28,6 @@ export class Harness {
       agent: { list: async () => { this.lists++; return this.agents; } },
       store: { get: async (key: string) => { if (this.storeError) throw this.storeError; return this.values.get(key); }, set: async (key: string, value: unknown) => { if (this.storeError) throw this.storeError; this.values.set(key, value); }, keys: async () => { if (this.storeError) throw this.storeError; return [...this.values.keys()]; }, delete: async (key: string) => { if (this.storeError) throw this.storeError; this.values.delete(key); } },
       command: { register: (value: unknown) => this.commands.push(value) },
-      fs: { stat: async (path: string, options?: unknown) => { if (this.statImpl) return this.statImpl(path, options); throw new Error(`ENOENT: no such file or directory, stat '${path}'`); }, write: async (path: string, text: string) => { if (this.writeError) throw this.writeError; if (this.writeImpl) await this.writeImpl(); this.paths.push(path); this.writes.push(text); } },
       ui: { log: (text: string) => this.debug.push(text), status: (text: string | undefined) => { this.status = text; this.statuses.push(text); }, toast: (text: string) => this.toasts.push(text), invalidate: () => {},  },
     } as unknown as EngineInterface;
     const on = ((event: string, ...args: unknown[]) => {
@@ -37,6 +37,15 @@ export class Harness {
       return { catch: () => {} };
     }) as unknown as On;
     try { register(on, options); } catch (error) { this.loadError = String(error); }
+  }
+  /** The plugin-log append script: rows are recorded as written; `realRun` also runs the script. */
+  async pluginLog(argv: string[]) {
+    if (this.writeError) throw this.writeError;
+    if (this.writeImpl) await this.writeImpl();
+    for (let i = 6; i < argv.length; i += 2) { this.paths.push(`${argv[4]}/${argv[i]}`); this.writes.push(argv[i + 1]!); }
+    if (!this.realRun) return { exitCode: 0, stdout: '', stderr: '' };
+    const done = spawnSync(argv[0]!, argv.slice(1), { encoding: 'utf8' });
+    return { exitCode: done.status ?? 1, stdout: done.stdout, stderr: done.stderr };
   }
   async emit(event: string, input: any = {}, result: any = {}) {
     let forwarded: unknown;
@@ -92,7 +101,8 @@ export class Harness {
   }
   async settle() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
   get pending() { return this.timers.filter(t => t.active && !t.interval); }
-  rows() { return this.writes.length ? JSON.parse('[' + this.writes.at(-1)!.trim().split('\n').join(',') + ']') : []; }
+  /** The decision rows the plugin logged, each the `detail` of its level row. */
+  rows() { return this.writes.map(text => JSON.parse(text).detail); }
   snapshot(id = this.id) { const prefix = `session:${encodeURIComponent(id)}:`; return [...this.values.entries()].filter(([key]) => key.startsWith(prefix)).map(([, value]) => value).at(-1) as any; }
   async command(args: string) { return (await this.emit('command.run', { command: 'keepwarm', args })).result as { text: string }; }
 }

@@ -5,7 +5,7 @@
 **Keeps Claude Code prompt caches warm during background waits with visible pokes, for the main chat and waiting sub-agents, capped per wait and each under its own rewrite-saving budget.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>
@@ -40,15 +40,15 @@ Waiting sub-agents (`subagents`, on by default) have independent episodes, timer
 
 ## Install
 
-Install the released version from the public repository (the marketplace pins `main`; unreleased development is on `develop`):
+Install the released version from Professor's marketplace (unreleased development is on `develop`):
 
 ```sh
 export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
-claude plugin marketplace add rezzminator/cache-keepwarm
-claude plugin install cache-keepwarm@cache-keepwarm
+claude plugin marketplace add rezzminator/professor
+claude plugin install cache-keepwarm@professor
 ```
 
-In a chat, `/plugin install cache-keepwarm --marketplace rezzminator/cache-keepwarm` does it in one step.
+In a chat, `/plugin install cache-keepwarm --marketplace rezzminator/professor` does it in one step.
 
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` also works in the `env` block of `settings.json`. The plugin is built against the plugin types of Claude Code 2.1.302 and needs a release with function hooks; function hooks are early access and may change between releases.
 
@@ -138,7 +138,7 @@ The status line is one line, retexted once a minute while an episode is armed; a
 - Waiting: `cache-keepwarm · waiting on agent "Audit the release notes" +1 more · 9m · pokes 2/4 · next in 3m`; an assumed lifetime appends `· TTL assumed 5m`; an elapsed time of 65 minutes reads `1h05m`.
 - Not warming: `cache-keepwarm · not warming: context 19,999 tokens is under the 20,000 minimum`, `not warming: no main request seen since the plugin loaded`, `not warming: 1h refresh unproven`.
 - Stopped: `cache-keepwarm · stopped:` followed by one reason: `poke limit reached 4/4` · `the next warm would cost more than the rewrite it saves (3 warms)` · `the cache had already lapsed (timer fired 4m late)` · `agent "X" was killed` · `poke failed (dropped: {reason})` · `timer failed ({message})` · `this Claude Code gives the Stop hook no background_tasks`.
-- Log: `cache-keepwarm · log write failed ({message})` or `log write refused ({reason})`, shown once; warming continues. A refusal names `log directory moved`, `log directory is not a directory`, `log directory unresolved` or `log target is a link or not a regular file`.
+- Log: `cache-keepwarm: plugin log {directory} failed: {message}; {n} rows are kept for the next write` or `cache-keepwarm: plugin log off: no PLUGIN_LOG_DIR and no HOME`, shown once per failing streak and re-armed by the next successful write; warming continues. Only an error reaches the screen.
 
 Labels (an agent's description, a command line) are sanitized to 40 characters plus an ellipsis for display and the poke text. They never enter the metadata log. Sub-agent log rows carry `kind: "subagent"` and `agentId`, not message text.
 
@@ -151,14 +151,13 @@ Six options, set in the plugin's `/config` page or by variable:
 | `CACHE_KEEPWARM_ENABLED` | `enabled` | `true` | Poke at all; `/keepwarm` overrides it for one chat |
 | `CACHE_KEEPWARM_MIN_CONTEXT` | `minContext` | `20000` | Smallest main-chat context in tokens worth a poke |
 | `CACHE_KEEPWARM_MAX_POKES` | `maxPokes` | `4` | Pokes per thread (the main chat, or one sub-agent) while its sorted set of pending ids is unchanged and nothing else happens; an integer of at least 1 |
-| `CACHE_KEEPWARM_LOG_DIR` | `logDir` | empty | Directory for `{session id}.{instance}.jsonl`, a metadata-only decision log of at most 500 rows per Claude Code process; empty writes none |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents in independent episodes; each poke also wakes the spawning parent for one real turn, which the forecast counts. Off leaves the main-chat path unchanged |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
 | `CACHE_KEEPWARM_STATUS` | `status` | `true` | Show the waiting and stopped status text under the prompt; off paints only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the JSON are unaffected |
 
 Precedence is variable, then option, then default. A blank variable is absent; booleans read `1`, `0`, `true` or `false` in any case; `maxPokes` reads a whole number of at least 1. A bad variable or option is named in the status and the default applies, never the configured option. The log never contains a label, command or description.
 
-The log directory must be private to you. The plugin resolves it once and pins that resolution, refusing to write if it later moves, and it refuses a leaf that is a link or not a regular file. Claude Code offers a plugin no write that refuses to follow a link, so a directory that other users can write still leaves a gap between check and write. The `{instance}` is a random identifier per Claude Code process, so two processes on one session never share a log file.
+The decision log is on by default and has no option or plugin variable: it writes under `$PLUGIN_LOG_DIR/cache-keepwarm` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/cache-keepwarm/logs`, and is off, said once, when neither resolves. It appends one JSON row per decision to `errors.jsonl` (a failed poke, timer, inventory or store write), `warnings.jsonl` or `info.jsonl` (every other decision), the directory `0700` and the files `0600`, written through `$.process.run` because Claude Code's file write replaces a whole file. A row's keys are `ts`, `plugin`, `level`, `event`, `msg`, `where`, `session` and `detail`, at most 4096 bytes; `detail` is the metadata row the plugin used to write (event, epoch, items, ttl, context, spent, reason, pokes, usage, ledger, session ledger). A level file past 20 MiB moves to `{file}.1`, older generations shifting up to `.5`, and a `log-capped` row goes to `warnings.jsonl`. A failed write keeps its rows, up to 2,000, for the next write; past that the oldest go, and the next successful write logs a `plugin-log-rows-dropped` error row counting them. Writers share a lock in the log directory, waited on up to 10 seconds. The screen shows an error and one line per failing streak; every other row stays in its file. A directory that other users can write still leaves a gap between check and write.
 
 Persistence keeps one snapshot per Claude Code process (`session:{session id}:{instance}`) of the last-use anchor and the numeric ledger, with its save time. A resumed session restores the newest valid snapshot for its own session id. Snapshots that are invalid, or older than seven days, are deleted when a session starts. A snapshot never restores the `/keepwarm` override, a timer, an admission or a grant. The plugin store is one JSON file shared by all processes; how concurrent writes from two processes interleave is unmeasured.
 
@@ -238,7 +237,7 @@ The unit gates (decisions, and the function-hook tests on a stand-in and on the 
 
 `CLAUDE.md` is the testing manual.
 
-The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the chat launcher `pfm`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. A capture checks that the waiting status cleared.
+The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. A capture checks that the waiting status cleared. Each lane starts its own `claude` detached in its own tmux server (socket `kw-{lane}-{id}`), with the lane's environment and Claude Code's `CLAUDE_CODE_PROMPT_CACHE_TTL` set to the lane's TTL, and ends it by killing that server and every process carrying the lane's marker; a run stopped by SIGKILL leaves it running, listed by `ls ${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/ | grep kw-` and ended with `tmux -L {socket} kill-server`.
 
 ## Credits
 

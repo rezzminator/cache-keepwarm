@@ -1,6 +1,6 @@
 {
   "name": "cache-keepwarm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Protect cached context \u2014 Keep main-chat and sub-agent background waits warm with visible pokes, capped per wait, under rewrite-saving budgets.",
   "type": "module",
@@ -13,7 +13,7 @@
     "test:unit": "vitest run --dir tests",
     "test:hooks": "command -v claude >/dev/null 2>&1 || { echo 'NOT RUN: missing claude'; exit 3; }; claude plugin test plugins/cache-keepwarm",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.hooks.json",
-    "validate:plugin": "command -v claude >/dev/null 2>&1 || { echo 'NOT RUN: missing claude'; exit 3; }; claude plugin validate --strict . && claude plugin validate --strict plugins/cache-keepwarm",
+    "validate:plugin": "command -v claude >/dev/null 2>&1 || { echo 'NOT RUN: missing claude'; exit 3; }; claude plugin validate --strict plugins/cache-keepwarm",
     "check:structure": "node scripts/check-structure.mjs",
     "release:check": "scripts/release-check.sh",
     "live": "scripts/live-proof.sh"

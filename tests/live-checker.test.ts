@@ -55,15 +55,15 @@ except (ValueError,RuntimeError) as e:
 sys.exit(1)`);
   expect(result.status, result.stderr).toBe(0);
 });
-test('cleanup attempts socket verification even if native kill times out', () => {
+test('cleanup attempts socket verification even if the server kill times out', () => {
   const result = python(`seen=[]
 def run(args,**kwargs):
- seen.append(args[0])
- if args[0]=='pfm': raise subprocess.TimeoutExpired(args,30)
+ seen.append(args)
+ if 'kill-server' in args: raise subprocess.TimeoutExpired(args,30)
  return types.SimpleNamespace(returncode=1,stdout='',stderr='')
 m.run=run;m.marked_pids=lambda marker: []
 result=m.cleanup('owned','marker','owned-socket')
-assert 'tmux' in seen and result['nativeSocketClosed'] and result['errors'],result`);
+assert seen==[['tmux','-L','owned-socket','kill-server'],['tmux','-L','owned-socket','list-sessions']] and result['nativeSocketClosed'] and result['errors'],(seen,result)`);
   expect(result.status, result.stderr).toBe(0);
 });
 test.each(['fifo', 'symlink', 'oversized'])('evidence reader refuses %s without blocking', kind => {
@@ -98,8 +98,8 @@ test('late API failure becomes VOID during polling rather than a return timeout'
  debug=root/'.claude/debug';debug.mkdir();(debug/'thread.txt').write_text('')
  m.os.environ={};m.Path.home=classmethod(lambda cls: root);m.marked_pids=lambda marker: []\n clock=[0]\n def now(): clock[0]+=100;return clock[0]\n m.time.monotonic=now;m.time.sleep=lambda seconds: None
  def run(args,**kwargs):
-  if args[:3]==['pfm','chat','new']:
-   (project/'thread.jsonl').write_text('{}\\n');return types.SimpleNamespace(returncode=0,stdout='cc\tname\towned-socket',stderr='')
+  if 'new-session' in args:
+   (project/'thread.jsonl').write_text('{}\\n');return types.SimpleNamespace(returncode=0,stdout='',stderr='')
   return types.SimpleNamespace(returncode=1 if args[0]=='tmux' else 0,stdout='',stderr='')
  m.run=run
  class Journal:
@@ -164,10 +164,10 @@ test('a lane without main-thread request records is not run, never clean', () =>
 });
 test('cleanup treats a never-launched chat as gone once processes and socket are verified', () => {
   const result = python(`def run(args,**kwargs):
- if args[0]=='pfm': return types.SimpleNamespace(returncode=1,stdout='owned\\tnot-found\\n',stderr='pfm chat: no chat named "owned"\\n')
- return types.SimpleNamespace(returncode=1,stdout='',stderr='')
+ if 'kill-server' in args: return types.SimpleNamespace(returncode=1,stdout='',stderr='no server running on /tmp/tmux-1000/owned\\n')
+ return types.SimpleNamespace(returncode=1,stdout='',stderr='error connecting to /tmp/tmux-1000/owned (No such file or directory)\\n')
 m.run=run;m.marked_pids=lambda marker: []
-result=m.cleanup('owned','marker',None)
+result=m.cleanup('owned','marker','owned')
 assert result['nativeSocketClosed'] and result['errors']==[] and result['ownedProcessesRemaining']==[],result`);
   expect(result.status, result.stderr).toBe(0);
 });
@@ -177,11 +177,11 @@ assert len(text.encode()) < m.ARG_LIMIT < 131072, len(text.encode())
 assert 'STEPS' not in text and 'run_in_background true' not in text, text[:600]`);
   expect(result.status, result.stderr).toBe(0);
 });
-test.each(['effort', 'effort-control'])('lane log routing isolates main/subagent %s producer files and passes its env', prefix => {
+test('lane log routing reads only decision rows and auto-effort-control decision files, and passes its env', () => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
- root=pathlib.Path(d); prefix='${prefix}'
- (root/'s1.i1.jsonl').write_text('{"event":"LOADED"}\\n');(root/f'{prefix}.s1.jsonl').write_text('{"event":"step"}\\n');(root/f'{prefix}.s1.2.jsonl').write_text('{"event":"step","n":2}\\n');(root/f'{prefix}.s1.subagent.jsonl').write_text('{"event":"step","agent":"a"}\\n')
- assert [p.name for p in m.plugin_logs(root)]==['s1.i1.jsonl'],m.plugin_logs(root)
+ root=pathlib.Path(d); log='"where":"hooks/cache-keepwarm.ts#log"'; effort=root/'auto-effort-control'
+ (root/'cache-keepwarm').mkdir();effort.mkdir();(root/'cache-keepwarm'/'info.jsonl').write_text('{'+log+',"detail":{"event":"LOADED","at":1}}\\n');(root/'cache-keepwarm'/'errors.jsonl').write_text('{'+log+',"detail":{"event":"stop","at":0}}\\n{"where":"hooks/cache-keepwarm.ts#persist","detail":{}}\\n');(effort/'decisions.s1.jsonl').write_text('{"event":"step"}\\n');(effort/'decisions.s1.2.jsonl').write_text('{"event":"step","n":2}\\n');(effort/'decisions.s1.subagent.jsonl').write_text('{"event":"step","agent":"a"}\\n');(effort/'errors.jsonl').write_text('{"event":"not-a-decision"}\\n')
+ assert sorted(p.name for p in m.plugin_logs(root))==['errors.jsonl','info.jsonl'],m.plugin_logs(root); assert m.decision_rows(m.plugin_logs(root))==[{'event':'stop','at':0},{'event':'LOADED','at':1}],m.decision_rows(m.plugin_logs(root))
  assert m.effort_rows(root)==[{'event':'step'},{'event':'step','n':2}],m.effort_rows(root); assert m.effort_rows(root,subagent=True)==[{'event':'step','agent':'a'}]
  assert m.debug_text(root)==('',False)
  seen={};m.cleanup=lambda *a:{'nativeSocketClosed':True,'ownedProcessesRemaining':[],'errors':[]}
@@ -189,9 +189,9 @@ test.each(['effort', 'effort-control'])('lane log routing isolates main/subagent
  m.run=launch
  try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','warm')
  except RuntimeError as e: assert 'stopped fixture' in str(e)
- assert seen.get('AUTO_EFFORT_LOG_FILE')==str(root/'out/warm/effort.jsonl'),seen.get('AUTO_EFFORT_LOG_FILE')
- assert seen.get('AUTO_EFFORT_CONTROL_LOG_FILE')==str(root/'out/warm/effort-control.jsonl'),seen.get('AUTO_EFFORT_CONTROL_LOG_FILE'); assert seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')=='false',seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
- for p in root.glob('effort*.jsonl'): p.unlink()
+ assert seen.get('PLUGIN_LOG_DIR')==str(root/'out/warm'),seen.get('PLUGIN_LOG_DIR'); assert 'AUTO_EFFORT_LOG_FILE' not in seen and 'AUTO_EFFORT_CONTROL_LOG_FILE' not in seen,seen
+ assert seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')=='false',seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
+ for p in effort.glob('decisions.*.jsonl'): p.unlink()
  try: m.effort_rows(root)
  except RuntimeError as e: assert 'need auto-effort log' in str(e);sys.exit(0)
  sys.exit(1)`);
@@ -203,11 +203,35 @@ found=[int(n) for n in m.re.findall(r'time.sleep\\((\\d+)\\)', steps)]
 assert found==${JSON.stringify(chunks)} and steps.count('LONG_PROBE_DONE')==1 and steps.count('DONE: run the next command now')==len(found)-1 and steps.endswith('LONG_PROBE_DONE")'+chr(39)+chr(96)),(found,steps)`);
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
-test('owned socket is read from the launch line on either stream', () => {
-  const result = python(`launched=types.SimpleNamespace(stdout='WAITING\\n',stderr='cc\\tkw-x\\tcc-1-2-3\\tnamed\\tlisted\\nattach: tmux -L cc-1-2-3\\n')
-assert m.owned_socket(launched.stdout+'\\n'+launched.stderr)=='cc-1-2-3'
-assert m.owned_socket('WAITING\\n') is None`);
+test('a lane starts claude in its own tmux server with the prompt file as one argument and fresh launch state', () => {
+  const result = python(`with tempfile.TemporaryDirectory() as d:
+ root=pathlib.Path(d);seen=[]
+ m.os.environ={'CLAUDECODE':'1','CLAUDE_CODE_SESSION_ID':'parent','ENABLE_PROMPT_CACHING_1H':'1','CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL':'1h','KEEP':'yes'};m.Path.home=classmethod(lambda cls: root)
+ m.cleanup=lambda *a:{'nativeSocketClosed':True,'ownedProcessesRemaining':[],'errors':[]}
+ def run(argv,**kw): seen.append((argv,kw.get('env')));return types.SimpleNamespace(stdout='',stderr='stopped fixture',returncode=1)
+ m.run=run
+ try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','ttl-1h',cache='1h')
+ except RuntimeError as e: assert 'ERROR launch' in str(e) and 'stopped fixture' in str(e),e
+ argv,env=seen[0]
+ assert argv[:2]==['tmux','-f'] and argv[argv.index('-L')+1].startswith('kw-ttl-1h-') and argv[argv.index('-c')+1]==str(root),argv
+ assert argv[-4:]==['-c','exec claude --model claude-haiku-5-5 --effort low "$(cat "$1")"','sh',str(root/'out/ttl-1h/prompt.txt')],argv
+ assert env['CLAUDE_CODE_PROMPT_CACHE_TTL']=='1h' and env['KEEP']=='yes' and not {'CLAUDECODE','CLAUDE_CODE_SESSION_ID','ENABLE_PROMPT_CACHING_1H','CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'} & set(env),env`);
   expect(result.status, result.stdout + result.stderr).toBe(0);
+});
+test('a lane held at the folder-trust dialog is BLOCKED, nothing typed', () => {
+  const result = python(`with tempfile.TemporaryDirectory() as d:
+ root=pathlib.Path(d);seen=[]
+ m.os.environ={};m.Path.home=classmethod(lambda cls: root);m.time.sleep=lambda seconds: None
+ m.cleanup=lambda *a:{'nativeSocketClosed':True,'ownedProcessesRemaining':[],'errors':[]}
+ trust=' Quick safety check: Is this a project you created or one you trust?\\n ❯ 1. Yes, I trust this folder\\n   2. No, exit\\n'
+ def run(argv,**kw): seen.append(argv[3] if argv[1]=='-L' else 'new-session');return types.SimpleNamespace(stdout=trust if 'capture-pane' in argv else '',stderr='',returncode=0)
+ m.run=run
+ try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','warm')
+ except RuntimeError as e: print(e)
+ evidence=json.loads((root/'out/warm/evidence.json').read_text())
+ assert evidence.get('trustBlocked') is True and 'send-keys' not in seen,(evidence,seen)`);
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(result.stdout).toContain('BLOCKED folder trust');
 });
 test.each([[{ at: 5 }, 5], [{ ts: 7 }, 7], [{ timestamp: '1970-01-01T00:00:01Z' }, 1000], [{ ts: '1970-01-01T00:00:02Z' }, 2000]])('timestamp reads every evidence stamp %#', (record, expected) => {
   const result = python(`print(m.checker.timestamp(json.loads(sys.argv[2])))`.replace('sys.argv[2]', JSON.stringify(JSON.stringify(record))));
@@ -255,10 +279,10 @@ test('a stop signal during a cleanup waits for the cleanup to finish', () => {
   const result = python(`import os,signal
 m.stop_on_signals()
 def run(cmd,**k):
- if cmd[:3]==['pfm','chat','kill']: os.kill(os.getpid(),signal.SIGTERM)
- return subprocess.CompletedProcess(cmd,0,'','')
+ if 'kill-server' in cmd: os.kill(os.getpid(),signal.SIGTERM)
+ return subprocess.CompletedProcess(cmd,0 if 'kill-server' in cmd else 1,'','')
 m.run=run; m.marked_pids=lambda marker: []
-r=m.cleanup('kw-x','marker',None)
+r=m.cleanup('kw-x','marker','kw-x')
 print(json.dumps({'signal':m.STOP['signal'],'closed':r['nativeSocketClosed'],'errors':r['errors']}))`);
   expect(result.stdout.trim(), result.stderr).toBe('{"signal": 15, "closed": true, "errors": []}');
 });

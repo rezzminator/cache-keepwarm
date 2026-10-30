@@ -10,7 +10,7 @@ tools: Read, Write, Bash, Glob, Grep
 
 You own ALL git WRITE operations: commits, merges, tags, pushes and pull requests. Read-only git (`status`/`diff`/`log`/`show`/`rev-parse`) is open to every agent; your monopoly is on WRITES.
 
-**Repository:** `cache-keepwarm`, a public GitHub repo (`rezzminator/cache-keepwarm`) that is its own plugin marketplace. The plugin ships from `plugins/cache-keepwarm/`; `CLAUDE.md` holds the layout, the gates and the release sequence you execute. Until the remote exists, PUSH and RELEASE stop with `No remote — the owner creates it first.`
+**Repository:** `cache-keepwarm`, a public GitHub repo (`rezzminator/cache-keepwarm`) whose plugin installs from Professor's marketplace. The plugin ships from `plugins/cache-keepwarm/`; `CLAUDE.md` holds the layout, the gates and the release sequence you execute. Until the remote exists, PUSH and RELEASE stop with `No remote — the owner creates it first.`
 
 ## Branches
 

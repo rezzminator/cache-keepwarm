@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import { Harness, pokeText as poke } from './stand-in.ts';
 const sub = { subagentMinContext: 20000 };
 test('sub-agent poke is addressed, attributable, independent, re-anchored and privately accounted', async () => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait();
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait();
   expect(h.pending).toHaveLength(1); h.draft = 'user typing'; await h.emit('prompt.edit'); await h.emit('turn.start', { turnId: 'main', text: 'Continue' }); await h.step();
   await h.advance(240000); expect(h.sends).toEqual([{ to: { agentId: 'sub' }, text: poke('1/4', '- command `work-sub`: sleep 540, pending 4m') }]);
   expect(h.submits).toHaveLength(0); await h.warmReply(); expect(h.pending[0]?.at).toBe(h.now + 240000);
@@ -13,7 +13,7 @@ test('sub-agent poke is addressed, attributable, independent, re-anchored and pr
   expect(h.pending).toHaveLength(0); await h.advance(300000); expect(h.sends).toHaveLength(1);
 });
 test('sub-agents are poked by default above the 100k sub-agent minimum, and never below it', async () => {
-  const small = new Harness({}, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await small.start(); await small.agentWait(); await small.advance(300000);
+  const small = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await small.start(); await small.agentWait(); await small.advance(300000);
   expect(small.sends).toHaveLength(0); expect(small.rows().some((r: any) => r.kind === 'subagent' && r.reason === 'small')).toBe(true);
   const h = new Harness(); await h.start(); await h.agentWait('sub', true, 120000); await h.advance(240000); expect(h.sends).toHaveLength(1);
 });
@@ -26,7 +26,7 @@ test('the sub-agent cap stops at N pokes and shows in /keepwarm; a foreign turn 
   expect(h.sends).toHaveLength(2); expect(h.sends[1]!.text.startsWith('Keep-warm poke 1/1:')).toBe(true);
 });
 test('a sub-agent poke may call tools: the wait continues and the poke is charged once', async () => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
   await h.emit('turn.start', { agentId: 'sub', turnId: 'warm-sub', text: h.sends[0]!.text });
   await h.emit('tool.call', { agentId: 'sub', tool: 'Read', file_path: 'x' }, { result: 'x' }); await h.warmReply();
   expect(h.pending).toHaveLength(1); expect(h.rows().filter((r: any) => r.kind === 'subagent' && r.event === 'warm')).toHaveLength(1);
@@ -43,12 +43,12 @@ test.each(['unowned', 'option', 'environment', 'off', 'foreign', 'compact', 'end
   await h.advance(300000); expect(h.sends).toHaveLength(0); expect(h.pending).toHaveLength(0);
 });
 test('sub-agent forecast uses the previous poke\'s actual spend and stops before a losing next poke', async () => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000); expect(h.sends).toHaveLength(1);
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000); expect(h.sends).toHaveLength(1);
   await h.warmReply(10000); expect(h.pending).toHaveLength(0); expect(h.rows().some((r: any) => r.kind === 'subagent' && r.reason === 'budget')).toBe(true);
 });
 test('sub-agent admission counts the parent wake: a large parent stops a poke the sub-agent alone would afford', async () => {
   for (const [parent, sends] of [[null, 2], [200000, 1]] as const) {
-    const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start();
+    const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start();
     if (parent) await h.step({ input_tokens: 2, output_tokens: 10, cache_read_input_tokens: parent, cache_creation_input_tokens: 0, model: 'claude-haiku-5-5' });
     await h.agentWait(); for (let i = 0; i < 3; i++) { await h.advance(240000); if (h.sends.length > i) await h.warmReply(); }
     expect(h.sends).toHaveLength(sends); expect(h.rows().some((r: any) => r.kind === 'subagent' && r.reason === 'budget')).toBe(true);
@@ -60,7 +60,7 @@ test('concurrent agents own distinct timers and foreign turns cannot revive an o
   await h.emit('turn.start', { agentId: 'one', turnId: 'foreign', text: 'Changed' }); await h.warmReply(3, 'one'); expect(h.pending).toHaveLength(0);
 });
 test('late admitted warm after off accounts once without reviving a grant', async () => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
   const text = h.sends[0]!.text; await h.emit('turn.start', { agentId: 'sub', turnId: 'warm-sub', text }); await h.command('off');
   await h.warmReply(); expect(h.rows().filter((r: any) => r.kind === 'subagent' && r.event === 'warm')).toHaveLength(1);
   expect((await h.command('status')).text).toContain('session 1 warms'); expect(h.pending).toHaveLength(0);
@@ -72,7 +72,7 @@ test('foreign turn without a new cached request cannot re-use the previous reque
   await h.emit('turn.complete', { agentId: 'sub', turnId: 'new', reason: 'answer' }); expect(h.pending).toHaveLength(0);
 });
 test.each(['slow', 'list-error', 'send-refused', 'send-error', 'task-ended', 'idle-child'])('sub-agent boundary %s fails closed', async kind => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait();
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait();
   if (kind === 'slow') h.engine.agent.list = async () => { h.now += 60000; return h.agents as any; };
   if (kind === 'list-error') h.engine.agent.list = async () => { throw new Error('roster unavailable'); };
   if (kind === 'send-refused') h.sendImpl = async () => ({ isDelivered: false, reason: 'gone' });
@@ -82,15 +82,15 @@ test.each(['slow', 'list-error', 'send-refused', 'send-error', 'task-ended', 'id
   await h.advance(240000); expect(h.sends).toHaveLength(kind.startsWith('send') ? 1 : 0); expect(h.pending).toHaveLength(0);
 });
 test('a departed sub-agent warm never writes usage or anchors into the cleared session', async () => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
   const text = h.sends[0]!.text; await h.emit('turn.start', { agentId: 'sub', turnId: 'warm-sub', text });
   h.id = 'new-session'; await h.emit('session.end', { reason: 'clear' }, { sessionId: h.id });
   await h.warmReply(); expect((await h.command('status')).text).toContain('session 0 warms');
-  expect(h.writes.filter((_, i) => h.paths[i]!.includes('/new-session.')).join('')).not.toContain('\"kind\":\"subagent\"');
+  expect(h.writes.filter(text => JSON.parse(text).session === 'new-session').join('')).not.toContain('\"kind\":\"subagent\"');
   expect(h.writes.some(text => text.includes('"event":"warm"'))).toBe(true); expect(h.pending).toHaveLength(0);
 });
 test('native self-send may skip start and step but complete accounts and re-anchors using the receipt', async () => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
   h.messages = [{ role: 'user', text: `The coordinator sent a message while you were working:\n${h.sends[0]!.text}\n\nAddress this before completing your current task.`, toolUses: [] }, { role: 'assistant', text: 'waiting', toolUses: [] }];
   const usage = { input_tokens: 4, output_tokens: 3, cache_read_input_tokens: 50000, cache_creation_input_tokens: 126, model: 'claude-haiku-5-5' };
   await h.emit('turn.complete', { agentId: 'sub', turnId: 'native-warm', reason: 'answer', answer: 'waiting', usage });
@@ -103,7 +103,7 @@ test.each(['waiting', 'Done'])('native hand-back %s remains an ordinary delivery
   expect((await h.emit('session.receive', input, { text: input.text })).result).toEqual({ text: input.text });
 });
 test.each(['list-error', 'send-refused', 'send-error'])('late %s stop log cannot cancel a newer request grant', async kind => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait();
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait();
   let release!: () => void, reached!: () => void; const blocked = new Promise<void>(r => { reached = r; }), wait = new Promise<void>(r => { release = r; });
   const list = h.engine.agent.list;
   if (kind === 'list-error') h.engine.agent.list = async () => { throw new Error('roster unavailable'); };
@@ -117,7 +117,7 @@ test.each(['list-error', 'send-refused', 'send-error'])('late %s stop log cannot
   expect(h.pending).toHaveLength(1);
 });
 test('late unknown-usage completion log cannot cancel a newer grant', async () => {
-  const h = new Harness(sub, { CACHE_KEEPWARM_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
+  const h = new Harness(sub, { PLUGIN_LOG_DIR: 'logs' }); await h.start(); await h.agentWait(); await h.advance(240000);
   await h.emit('turn.start', { agentId: 'sub', turnId: 'warm-sub', text: h.sends[0]!.text });
   let release!: () => void, reached!: () => void; const blocked = new Promise<void>(r => { reached = r; }), wait = new Promise<void>(r => { release = r; });
   h.writeImpl = async () => { reached(); await wait; };
