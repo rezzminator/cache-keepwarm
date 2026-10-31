@@ -118,8 +118,8 @@ def decision_rows(paths):
     return sorted((row['detail'] for path in paths for row in rows(path) if row.get('where') == 'hooks/cache-keepwarm.ts#log'), key=lambda row: row.get('at', 0))
 
 def effort_rows(directory, subagent=False):
-    # auto-effort-control's decision logs sit in its plugin log directory: decisions.{session}[.{segment}].jsonl, the sub-agents' .subagent.jsonl.
-    files = sorted((p for p in (directory / 'auto-effort-control').glob('decisions.*.jsonl') if p.name.endswith('.subagent.jsonl') == subagent), key=lambda p: (len(p.name), p.name))
+    # auto-effort's decision logs sit in its plugin log directory: decisions.{session}[.{segment}].jsonl, the sub-agents' .subagent.jsonl.
+    files = sorted((p for p in (directory / 'auto-effort').glob('decisions.*.jsonl') if p.name.endswith('.subagent.jsonl') == subagent), key=lambda p: (len(p.name), p.name))
     if not files and not subagent:
         raise RuntimeError('ERROR need auto-effort log')
     return [row for path in files for row in rows(path)]
