@@ -1,6 +1,6 @@
 {
   "name": "cache-keepwarm",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Protect cached context \u2014 Keep main-chat and sub-agent background waits warm with visible pokes, capped per wait, under rewrite-saving budgets.",
   "type": "module",
@@ -19,7 +19,7 @@
     "live": "scripts/live-proof.sh"
   },
   "devDependencies": {
-    "@types/node": "22.20.4",
+    "@types/node": "22.20.5",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
   }

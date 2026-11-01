@@ -1,0 +1,23 @@
+{
+  "name": "professor",
+  "description": "Keeps the main chat's prompt cache warm while it waits on background agents, shells, Monitors and workflows: one invisible replay before expiry, admitted only while the forecast spend stays under the rewrite it saves.",
+  "owner": {
+    "name": "rezzminator",
+    "url": "https://github.com/rezzminator/cache-keepwarm"
+  },
+  "plugins": [
+    {
+      "name": "cache-keepwarm",
+      "source": "./plugins/cache-keepwarm",
+      "description": "Keeps the main chat's prompt cache warm while it waits on background agents, shells, Monitors and workflows: one invisible replay before expiry, admitted only while the forecast spend stays under the rewrite it saves.",
+      "homepage": "https://github.com/rezzminator/cache-keepwarm",
+      "license": "MIT",
+      "keywords": [
+        "claude-code",
+        "prompt-cache",
+        "keep-warm",
+        "function-hooks"
+      ]
+    }
+  ]
+}
