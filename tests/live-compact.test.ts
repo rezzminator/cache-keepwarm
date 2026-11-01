@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, URL } from 'node:url';
+import './live-fixtures.ts';
 const runner = fileURLToPath(new URL('../scripts/live-proof.py', import.meta.url));
 // One polled warm lane whose plugin log holds `compact`; a later API error ends the lane, so reaching it proves the compact row did not void.
 function lane(compact: Record<string, unknown>) {

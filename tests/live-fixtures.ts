@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 /** Shared evidence fixtures for the live checker and runner tests. */
+// macOS keeps tmpdir under the /var -> /private/var link, which the evidence reader refuses by design: tests and their python children get the canonical path.
+process.env.TMPDIR = realpathSync(tmpdir());
 export const script = fileURLToPath(new URL('../scripts/live-check.py', import.meta.url));
 export const runner = fileURLToPath(new URL('../scripts/live-proof.py', import.meta.url));
 export const at = 1000000;
