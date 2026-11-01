@@ -33,13 +33,16 @@ test.each([
   [[{ ...saved, sessionId: 'other' }, saved], { kind: 'restored', anchor, ledger, savedAt: 150 }],
   [[{ ...saved, sessionId: 'other' }, { ...saved, version: 2 }], { kind: 'rejected', reason: 'session-mismatch' }],
 ] as const)('newest valid actor restores %#', (values, expected) => expect(call(() => pickRestore(values, { sessionId: 'session-1', now: 200 }))).toEqual(expected));
-test('stale and invalid snapshots are pruned; fresh ones and foreign keys stay', () => {
+test('snapshots past the horizon are pruned, readable or not; fresh ones, unaged ones and foreign keys stay', () => {
   const now = 10 * 86_400_000;
   const entries = [
     { key: 'session:session-1:a', value: { ...saved, savedAt: now - 1000, anchor: null } },
     { key: 'session:session-1:b', value: { ...saved, savedAt: now - RESTORE_HORIZON_MS - 1, anchor: null } },
     { key: 'session:session-2:c', value: { broken: true } },
+    { key: 'session:session-2:d', value: { ...saved, version: 2, savedAt: now - 1000 } },
+    { key: 'session:session-2:e', value: { ...saved, version: 2, savedAt: now - RESTORE_HORIZON_MS - 1 } },
+    { key: 'session:session-2:f', value: { ...saved, savedAt: now - RESTORE_HORIZON_MS } },
     { key: 'other', value: { savedAt: 0 } },
   ];
-  expect(call(() => staleKeys(entries, { now }))).toEqual(['session:session-1:b', 'session:session-2:c']);
+  expect(call(() => staleKeys(entries, { now }))).toEqual(['session:session-1:b', 'session:session-2:e']);
 });

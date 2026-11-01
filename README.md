@@ -88,7 +88,7 @@ External status-line readers get one metadata-only file per **main session**, ne
 ${XDG_STATE_HOME:-$HOME/.local/state}/cache-keepwarm/sessions/{sessionId}.json
 ```
 
-`CACHE_KEEPWARM_STATE_DIR` overrides the sessions directory itself (an absolute path, not a parent). Blank is absent. This transport variable is not a `/config` option. Node.js 20+ must be on Claude Code's `PATH` for the file writer. A same-directory, exclusive temporary file (mode `0600`) is renamed atomically over the destination; new directories use `0700`. Writers serialize changes within the process, skip unchanged projections, and publish on main status changes and `/keepwarm on|off`. Files contain no task labels, command text, messages, or sub-agent views.
+`CACHE_KEEPWARM_STATE_DIR` overrides the sessions directory itself (an absolute path, not a parent). Blank is absent. A relative `CACHE_KEEPWARM_STATE_DIR` or `XDG_STATE_HOME` is skipped for the next in line and named in the status, as `state directory: CACHE_KEEPWARM_STATE_DIR not absolute; using {directory}`. This transport variable is not a `/config` option. Node.js 20+ must be on Claude Code's `PATH` for the file writer. A same-directory, exclusive temporary file (mode `0600`) is renamed atomically over the destination; new directories use `0700`. Writers serialize changes within the process, skip unchanged projections, and publish on main status changes and `/keepwarm on|off`. Files contain no task labels, command text, messages, or sub-agent views.
 
 ### v1 fields
 
@@ -159,14 +159,14 @@ Precedence is variable, then option, then default. A blank variable is absent; b
 
 The decision log is on by default and has no option or plugin variable: it writes under `$PLUGIN_LOG_DIR/cache-keepwarm` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/cache-keepwarm/logs`, and is off, said once, when neither resolves. It appends one JSON row per decision to `errors.jsonl` (a failed poke, timer, inventory or store write), `warnings.jsonl` or `info.jsonl` (every other decision), the directory `0700` and the files `0600`, written through `$.process.run` because Claude Code's file write replaces a whole file. A row's keys are `ts`, `plugin`, `level`, `event`, `msg`, `where`, `session` and `detail`, at most 4096 bytes; `detail` is the metadata row the plugin used to write (event, epoch, items, ttl, context, spent, reason, pokes, usage, ledger, session ledger). A level file past 20 MiB moves to `{file}.1`, older generations shifting up to `.5`, and a `log-capped` row goes to `warnings.jsonl`. A failed write keeps its rows, up to 2,000, for the next write; past that the oldest go, and the next successful write logs a `plugin-log-rows-dropped` error row counting them. Writers share a lock in the log directory, waited on up to 10 seconds. The screen shows an error and one line per failing streak; every other row stays in its file. A directory that other users can write still leaves a gap between check and write.
 
-Persistence keeps one snapshot per Claude Code process (`session:{session id}:{instance}`) of the last-use anchor and the numeric ledger, with its save time. A resumed session restores the newest valid snapshot for its own session id. Snapshots that are invalid, or older than seven days, are deleted when a session starts. A snapshot never restores the `/keepwarm` override, a timer, an admission or a grant. The plugin store is one JSON file shared by all processes; how concurrent writes from two processes interleave is unmeasured.
+Persistence keeps one snapshot per Claude Code process (`session:{session id}:{instance}`) of the last-use anchor and the numeric ledger, with its save time. A resumed session restores the newest valid snapshot for its own session id. Snapshots older than seven days by their save time are deleted when a session starts, valid or not; one this version cannot read (another version, a damaged record) stays until then, one with no save time stays, and one of the session's own id is shown as `resume refused (invalid-record)`. A snapshot never restores the `/keepwarm` override, a timer, an admission or a grant. The plugin store is one JSON file shared by all processes; how concurrent writes from two processes interleave is unmeasured.
 
 ## TTL resolution
 
 The cache lifetime is resolved per episode, first match wins:
 
 1. `FORCE_PROMPT_CACHING_5M=1`: 5m.
-2. `CLAUDE_CODE_PROMPT_CACHE_TTL` equal to `5m` or `1h`: that value.
+2. `CLAUDE_CODE_PROMPT_CACHE_TTL` equal to `5m` or `1h`: that value. Any other non-blank value of it, or of `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`, is skipped and named in the status: `CLAUDE_CODE_PROMPT_CACHE_TTL="30m" ignored: not 5m or 1h`.
 3. The session's observed lifetime: a request sent 330,000 to 3,300,000 ms after the previous one that read at least 90% of the previous context means 1h; below 90% means 5m; outside that gap there is no evidence.
 4. `ENABLE_PROMPT_CACHING_1H=1`: 1h.
 5. Otherwise 5m, shown as `TTL assumed 5m`. An assumed 5m is never late, only more frequent.

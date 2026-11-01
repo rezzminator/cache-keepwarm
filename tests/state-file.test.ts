@@ -62,10 +62,12 @@ test('main session publishes atomic v1 replacements, toggles, and deletes on end
 });
 
 test.each([
-  [{ CACHE_KEEPWARM_STATE_DIR: '/state/override', XDG_STATE_HOME: '/state/xdg', HOME: '/state/user' }, '/state/override'],
-  [{ CACHE_KEEPWARM_STATE_DIR: ' ', XDG_STATE_HOME: '/state/xdg', HOME: '/state/user' }, '/state/xdg/cache-keepwarm/sessions'],
-  [{ HOME: '/state/user' }, '/state/user/.local/state/cache-keepwarm/sessions'],
-])('state transport resolves its directory and logs failures without breaking commands %#', async (env, directory) => {
+  [{ CACHE_KEEPWARM_STATE_DIR: '/state/override', XDG_STATE_HOME: '/state/xdg', HOME: '/state/user' }, '/state/override', undefined],
+  [{ CACHE_KEEPWARM_STATE_DIR: ' ', XDG_STATE_HOME: '/state/xdg', HOME: '/state/user' }, '/state/xdg/cache-keepwarm/sessions', undefined],
+  [{ HOME: '/state/user' }, '/state/user/.local/state/cache-keepwarm/sessions', undefined],
+  [{ CACHE_KEEPWARM_STATE_DIR: 'state/relative', XDG_STATE_HOME: '/state/xdg', HOME: '/state/user' }, '/state/xdg/cache-keepwarm/sessions', 'state directory: CACHE_KEEPWARM_STATE_DIR not absolute; using /state/xdg/cache-keepwarm/sessions'],
+  [{ CACHE_KEEPWARM_STATE_DIR: 'state/relative', XDG_STATE_HOME: 'xdg', HOME: '/state/user' }, '/state/user/.local/state/cache-keepwarm/sessions', 'state directory: CACHE_KEEPWARM_STATE_DIR, XDG_STATE_HOME not absolute; using /state/user/.local/state/cache-keepwarm/sessions'],
+])('state transport resolves its directory and logs failures without breaking commands %#', async (env, directory, warning) => {
   const h = new Harness({}, env), destinations: string[] = [];
   (h.engine as any).process.run = async (argv: string[]) => { if (argv[0] !== 'node') return { exitCode: 0, stdout: '', stderr: '' }; destinations.push(argv[3]!); throw new Error('writer unavailable'); };
   await h.start();
@@ -75,4 +77,5 @@ test.each([
   expect(destinations.every(path => path === directory)).toBe(true);
   expect(h.debug.at(-1)).toContain(directory + '/session-1.json: Error: writer unavailable');
   expect(h.toasts).toEqual([]);
+  expect((h.status ?? '').split(' · ').filter(part => part.startsWith('state directory'))).toEqual(warning ? [warning] : []);
 });

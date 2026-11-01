@@ -52,6 +52,21 @@ export function formatLedger(ledger: BudgetLedger | null, session: SessionLedger
 export function formatState(view: StatusView): string {
   return `${prefix}${view.enabled ? 'on' : 'off'} (${view.source === 'launch' ? 'launch default' : 'session override'}) · ${reasons[view.reason]}${view.reason === 'poke-limit' ? limit(view.pokes) : ''} [${view.reason}] · ${view.items.length ? `${label(view.items[0])}${view.items.length > 1 ? ` +${view.items.length - 1} more` : ''} · ${duration(view.now - Math.min(...view.items.map(i => i.firstSeenAt)))} · ETA unknown` : 'no current wait'} · ${view.context ?? 'unknown'} tokens · ${formatLedger(view.ledger, view.session)}${view.lastOutcome ? ` · last: ${formatOutcome(view.lastOutcome)}` : ''}${view.warnings?.length ? ' · ' + view.warnings.join(' · ') : ''}`;
 }
+type StateEnv = Partial<Record<'CACHE_KEEPWARM_STATE_DIR' | 'XDG_STATE_HOME' | 'HOME', string>>;
+/** The sessions directory: CACHE_KEEPWARM_STATE_DIR, else XDG_STATE_HOME's, else HOME's. The writer takes only an absolute one, so a
+ * relative value is skipped and named in `warning`; with none left the state file is off. */
+export function stateDirectory(env: StateEnv): { dir: string; warning?: string } {
+  const bad: string[] = [];
+  const pick = (name: keyof StateEnv, suffix: string) => {
+    const value = env[name]?.trim();
+    if (!value) return undefined;
+    if (value.startsWith('/')) return value + suffix;
+    bad.push(name); return undefined;
+  };
+  const dir = pick('CACHE_KEEPWARM_STATE_DIR', '') ?? pick('XDG_STATE_HOME', '/cache-keepwarm/sessions') ?? pick('HOME', '/.local/state/cache-keepwarm/sessions') ?? '';
+  if (!bad.length && dir) return { dir };
+  return { dir, warning: `state directory: ${bad.length ? bad.join(', ') + ' not absolute' : 'HOME unset'}; ${dir ? 'using ' + dir : 'session state off'}` };
+}
 /** Public v1 session projection. No task labels or sub-agent state leave this view. */
 export function sessionState(view: StatusView, sessionId: string) {
   const reason = view.enabled ? view.reason : 'off';

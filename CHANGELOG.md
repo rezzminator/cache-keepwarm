@@ -2,6 +2,14 @@
 
 Every release of cache-keepwarm. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-keepwarm--v<version>`, with a GitHub release carrying the section below.
 
+## [Unreleased]
+
+### Fixed
+
+- A relative `CACHE_KEEPWARM_STATE_DIR` or `XDG_STATE_HOME` no longer fails every session-state write into the debug log: it is skipped for the next directory in line and named in the status.
+- A stored session snapshot this version cannot read (another version, a damaged record) is no longer deleted at session start: it stays until seven days past its save time, and one of the session's own id shows `resume refused (invalid-record)`.
+- A `CLAUDE_CODE_PROMPT_CACHE_TTL` or `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` other than `5m` or `1h` is named in the status instead of passing unreported.
+
 ## [0.6.1] — 2026-11-01
 
 ### Added
