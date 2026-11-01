@@ -46,6 +46,6 @@ Main-session state is published atomically to `${XDG_STATE_HOME:-$HOME/.local/st
 
 ## Install
 
-The repository is public: <https://github.com/rezzminator/cache-keepwarm>. Development is on `develop`. Install it from Professor's marketplace: `claude plugin marketplace add rezzminator/professor`, then `claude plugin install cache-keepwarm@professor`.
+The repository is public: <https://github.com/rezzminator/cache-keepwarm>. Development is on `develop`. Install it from its own marketplace: `claude plugin marketplace add rezzminator/cache-keepwarm`, then `claude plugin install cache-keepwarm@professor`.
 
 It requires `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`. A Claude Code managed by an organization skips the plugin's `classic.Stop`, `session.compact` and `classic.PostModelSwitch` hooks unless the organization lists the plugin. The root README of the repository is the full documentation, including TTL resolution, the budget ledger and every limit: <https://github.com/rezzminator/cache-keepwarm>.
