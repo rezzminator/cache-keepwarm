@@ -1,12 +1,12 @@
-# Every check release.yml runs on a pull request to main; `make release-check` runs them all locally first.
+# Every check ci.yml runs on a pull request to main; `make release-check` runs them all locally first.
 RUN := $(if $(CI),,mise exec node@24 --)
 
-.PHONY: release-check gate release
+.PHONY: release-check check release
 
-release-check: gate release
+release-check: check release
 
-gate: export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS := 1
-gate:
+check: export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS := 1
+check:
 	$(RUN) npm ci
 	$(RUN) npm test
 	$(RUN) npm run typecheck
