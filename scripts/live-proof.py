@@ -426,8 +426,8 @@ def main():
             return 2
     version = run(['claude', '--version'])
     print('need Claude Code: ' + version.stdout.strip(), flush=True)
-    if version.returncode or '2.1.302' not in version.stdout:
-        print('ERROR need measured Claude Code 2.1.302')
+    if version.returncode or '2.1.316' not in version.stdout:
+        print('ERROR need measured Claude Code 2.1.316')
         return 2
     if args.lane != 'state' and (not args.auto_effort_dir or not (args.auto_effort_dir / '.claude-plugin/plugin.json').is_file()):
         print('ERROR need --auto-effort-dir pointing at a local plugin')

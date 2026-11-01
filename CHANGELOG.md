@@ -2,7 +2,7 @@
 
 Every release of cache-keepwarm. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-keepwarm--v<version>`, with a GitHub release carrying the section below.
 
-## [Unreleased]
+## [0.6.2] — 2026-11-01
 
 ### Fixed
 

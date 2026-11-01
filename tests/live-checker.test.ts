@@ -83,7 +83,7 @@ test('all runs the four 5m sequences and leaves ttl-1h to its own lane', () => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
  root=pathlib.Path(d);plugin=root/'plugin';(plugin/'.claude-plugin').mkdir(parents=True);(plugin/'.claude-plugin/plugin.json').write_text('{}')
  seen=[]
- m.run=lambda *a,**k: types.SimpleNamespace(returncode=0,stdout='2.1.302',stderr='')
+ m.run=lambda *a,**k: types.SimpleNamespace(returncode=0,stdout='2.1.316',stderr='')
  def lane(args,output,mode,**kwargs):
   output.mkdir(parents=True,exist_ok=True);seen.append(mode);return {}
  m.lane=lane;m.special=lambda *a: 'PASS mock safety';m.checker.check_cap=lambda lane: {'verdict':'PASS mock cap'};m.shutil.which=lambda tool: tool
@@ -260,7 +260,7 @@ test('a stop signal mid-lane runs the lane cleanup and starts no later lane', ()
   const result = python(`import os,signal,time
 tmp=pathlib.Path(tempfile.mkdtemp()); (tmp/'ae/.claude-plugin').mkdir(parents=True); (tmp/'ae/.claude-plugin/plugin.json').write_text('{}')
 m.shutil.which=lambda tool:'/bin/true'
-m.run=lambda cmd,**k: subprocess.CompletedProcess(cmd,0,'2.1.302 (Claude Code)','')
+m.run=lambda cmd,**k: subprocess.CompletedProcess(cmd,0,'2.1.316 (Claude Code)','')
 calls=[]
 def lane(args,directory,mode,**k):
  calls.append(mode)

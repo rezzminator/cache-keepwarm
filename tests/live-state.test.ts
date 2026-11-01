@@ -27,7 +27,7 @@ test('state-only live invocation needs no comparison plugin and launches one lan
 m.stop_on_signals=lambda:None
 m.shutil.which=lambda _: '/tools/available'
 def run(args,**kwargs):
- return types.SimpleNamespace(returncode=0,stdout='2.1.302',stderr='')
+ return types.SimpleNamespace(returncode=0,stdout='2.1.316',stderr='')
 m.run=run
 def lane(args,output,mode,**kwargs):
  seen.append(mode)
