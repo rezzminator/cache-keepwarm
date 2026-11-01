@@ -2,6 +2,12 @@
 
 Every release of cache-keepwarm. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-keepwarm--v<version>`, with a GitHub release carrying the section below.
 
+## [0.6.1] — 2026-11-01
+
+### Added
+
+- The repository is also a marketplace of its own, named `professor`: `claude plugin marketplace add rezzminator/cache-keepwarm`, then `claude plugin install cache-keepwarm@professor`, installs the plugin under the same id as Professor's marketplace, so options saved under `pluginConfigs["cache-keepwarm@professor"]` apply either way.
+
 ## [0.6.0] — 2026-10-30
 
 ### Changed
