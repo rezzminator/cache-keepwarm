@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { observeTtl, resolveTtl, subagentTtl } from '../plugins/cache-keepwarm/src/ttl.ts';
+import { badTtl, observeTtl, resolveTtl, subagentTtl } from '../plugins/cache-keepwarm/src/ttl.ts';
 test.each([
   [{ FORCE_PROMPT_CACHING_5M: '1', CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }, '1h', { ttl: '5m', source: 'force-5m' }],
   [{ CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }, '5m', { ttl: '1h', source: 'env' }],
@@ -34,3 +34,11 @@ test.each([
   [{ ENABLE_PROMPT_CACHING_1H: '1' }, '5m', '1h'], [{}, '1h', '1h'],
   [{ FORCE_PROMPT_CACHING_5M: '1', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '1h' }, '1h', '5m'],
 ] as const)('sub-agent TTL %#', (env, observed, ttl) => expect((resolveTtl as Function)(env, observed, 'subagent').ttl).toBe(ttl));
+test.each([
+  [{}, []], [{ CLAUDE_CODE_PROMPT_CACHE_TTL: '1h', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '5m' }, []], [{ CLAUDE_CODE_PROMPT_CACHE_TTL: ' ' }, []],
+  [{ CLAUDE_CODE_PROMPT_CACHE_TTL: '30m' }, ['CLAUDE_CODE_PROMPT_CACHE_TTL="30m" ignored: not 5m or 1h']],
+  [{ CLAUDE_CODE_PROMPT_CACHE_TTL: '1H', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: 'bad' }, ['CLAUDE_CODE_PROMPT_CACHE_TTL="1H" ignored: not 5m or 1h', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL="bad" ignored: not 5m or 1h']],
+] as const)('a TTL variable Claude Code does not take is named %#', (env, expected) => {
+  let actual: unknown; try { actual = badTtl(env); } catch (error) { actual = String(error); }
+  expect(actual).toEqual(expected);
+});

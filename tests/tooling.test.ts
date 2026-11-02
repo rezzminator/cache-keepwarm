@@ -43,9 +43,21 @@ test('linked worktree scans staged content, not only its safe working copy', () 
   const dir = mkdtempSync(join(tmpdir(), 'cache-keepwarm-index-'));
   try {
     mkdirSync(join(dir, 'bin')); writeFileSync(join(dir, '.git'), 'gitdir: external'); writeFileSync(join(dir, 'candidate.txt'), 'safe');
-    const git = join(dir, 'bin/git'); writeFileSync(git, '#!/bin/sh\ncase "$1" in ls-files|diff) printf "candidate.txt\\0";; show) printf "' + '/' + 'home' + '/example/private";; esac\n'); chmodSync(git, 0o755);
+    const git = join(dir, 'bin/git'); writeFileSync(git, '#!/bin/sh\ncase "$1 $2" in "ls-files --deleted") ;; ls-files*|diff*) printf "candidate.txt\\0";; show*) printf "' + '/' + 'home' + '/example/private";; esac\n'); chmodSync(git, 0o755);
     const result = spawnSync(process.execPath, [join(root, 'scripts/check-structure.mjs'), '--root', dir], { encoding: 'utf8', env: { ...process.env, PATH: join(dir, 'bin') } });
     expect(result.status).toBe(1); expect(result.stderr).toContain('LEAK staged:candidate.txt');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test('a tracked file deleted from the working tree is no candidate, its siblings still are', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cache-keepwarm-deleted-'));
+  const git = (...args: string[]) => spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' });
+  try {
+    expect(git('init', '-q').status).toBe(0);
+    writeFileSync(join(dir, 'gone.yml'), 'safe\n'); writeFileSync(join(dir, 'kept.txt'), 'safe\n');
+    expect(git('add', '.').status).toBe(0); expect(git('commit', '-qm', 'two files').status).toBe(0);
+    rmSync(join(dir, 'gone.yml'));
+    const result = spawnSync(process.execPath, [join(root, 'scripts/check-structure.mjs'), '--root', dir], { encoding: 'utf8' });
+    expect([result.status, result.stderr, result.stdout]).toEqual([0, '', 'Enumerated 1 working candidates and 0 staged candidates\nPASS structure: scanned 1 candidate contents\n']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test('native gate prerequisites report NOT RUN when claude is missing', async () => {

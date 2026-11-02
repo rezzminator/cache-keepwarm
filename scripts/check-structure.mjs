@@ -43,10 +43,13 @@ try {
     const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     const paths = git(['ls-files', '--cached', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean);
     if (!paths.length) throw new Error('no candidate content enumerated');
-    for (const path of new Set(paths)) candidate(path);
+    // A tracked file deleted from the working tree has no content left to scan.
+    const deleted = new Set(git(['ls-files', '--deleted', '-z']).split('\0').filter(Boolean));
+    const working = [...new Set(paths)].filter(path => !deleted.has(path));
+    for (const path of working) candidate(path);
     const staged = git(['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z']).split('\0').filter(Boolean);
     for (const path of staged) inspect(path, git(['show', `:${path}`]), `staged:${path}`);
-    console.log(`Enumerated ${new Set(paths).size} working candidates and ${staged.length} staged candidates`);
+    console.log(`Enumerated ${working.length} working candidates and ${staged.length} staged candidates`);
   } else walk(root);
   if (!count) throw new Error('no candidate content enumerated');
 } catch (error) { console.error(`ERROR enumerate: ${error.message}`); process.exit(2); }

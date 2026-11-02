@@ -163,9 +163,10 @@ test.each(['clear', 'resume'])('continuing %s separates identity, rows and obser
   expect(h.writes.map(text => JSON.parse(text)).some(row => row.session === 'session-2' && row.detail.event === 'poke')).toBe(false); expect(h.status).toContain('waiting on');
 });
 test('bad launch variables remain observable after normal status painting', async () => {
-  const h = new Harness({}, { CACHE_KEEPWARM_MAX_POKES: 'bad' }); await h.arm();
+  const h = new Harness({}, { CACHE_KEEPWARM_MAX_POKES: 'bad', CLAUDE_CODE_PROMPT_CACHE_TTL: '30m' }); await h.arm();
   expect(h.status).toContain('CACHE_KEEPWARM_MAX_POKES'); expect((await h.command('status')).text).toContain('CACHE_KEEPWARM_MAX_POKES');
   expect(h.status).toContain('pokes 0/4');
+  expect(h.status?.split(' · ').filter(part => part.startsWith('CLAUDE_CODE_'))).toEqual(['CLAUDE_CODE_PROMPT_CACHE_TTL="30m" ignored: not 5m or 1h']);
 });
 test('status off paints no waiting text, while a bad option stays visible', async () => {
   const h = new Harness({ status: false }); await h.arm();
@@ -188,9 +189,11 @@ test('two processes on one session keep both actors\' snapshots; a later resume 
   const c = new Harness(); c.values = shared; c.now = b.now + 1000; await c.start();
   expect((await c.command('status')).text).toContain('session 2 warms');
 });
-test('snapshots past the restore horizon are pruned at start; fresh ones stay', async () => {
+test('snapshots past the restore horizon are pruned at start; fresh ones stay, and an unreadable own one is shown', async () => {
   const h = new Harness(); const fresh = { version: 1, sessionId: 'other', savedAt: h.now - 1000, anchor: null, ledger: { spent: 0, warms: 0, episodes: 0, estimatedNet: 0, unknown: 0 } };
   h.values.set('session:old:x', { ...fresh, sessionId: 'old', savedAt: h.now - 8 * 86_400_000 }); h.values.set('session:other:y', fresh);
+  h.values.set('session:session-1:z', { ...fresh, sessionId: 'session-1', version: 2 });
   await h.start();
   expect(h.values.has('session:old:x')).toBe(false); expect(h.values.has('session:other:y')).toBe(true);
+  expect(h.values.get('session:session-1:z')).toEqual({ ...fresh, sessionId: 'session-1', version: 2 }); expect(h.toasts).toEqual(['cache-keepwarm · resume refused (invalid-record)']);
 });

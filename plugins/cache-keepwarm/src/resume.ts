@@ -30,10 +30,8 @@ export function pickRestore(values: readonly unknown[], at: { sessionId: string;
   const restored = results.filter((r): r is Extract<RestoreResult, { kind: 'restored' }> => r.kind === 'restored').sort((a, b) => b.savedAt - a.savedAt)[0];
   return restored ?? results.find(r => r.kind === 'rejected') ?? { kind: 'absent' };
 }
+/** Session records past the horizon, by their own `savedAt`, readable or not: a record this copy cannot restore (another version, a
+ * damaged one) is kept until it ages out, and one without a usable `savedAt` is kept, never deleted unread. */
 export function staleKeys(entries: readonly { key: string; value: unknown }[], { now }: { now: number }): string[] {
-  return entries.filter(({ key, value }) => {
-    if (!key.startsWith('session:')) return false;
-    const r = restoreAnchor(value, { sessionId: record(value) && typeof value.sessionId === 'string' ? value.sessionId : '', now: Number.MAX_SAFE_INTEGER });
-    return r.kind !== 'restored' || r.savedAt < now - RESTORE_HORIZON_MS;
-  }).map(({ key }) => key);
+  return entries.filter(({ key, value }) => key.startsWith('session:') && record(value) && typeof value.savedAt === 'number' && value.savedAt < now - RESTORE_HORIZON_MS).map(({ key }) => key);
 }

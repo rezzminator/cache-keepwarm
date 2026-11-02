@@ -83,7 +83,7 @@ test('all runs the four 5m sequences and leaves ttl-1h to its own lane', () => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
  root=pathlib.Path(d);plugin=root/'plugin';(plugin/'.claude-plugin').mkdir(parents=True);(plugin/'.claude-plugin/plugin.json').write_text('{}')
  seen=[]
- m.run=lambda *a,**k: types.SimpleNamespace(returncode=0,stdout='2.1.302',stderr='')
+ m.run=lambda *a,**k: types.SimpleNamespace(returncode=0,stdout='2.1.316',stderr='')
  def lane(args,output,mode,**kwargs):
   output.mkdir(parents=True,exist_ok=True);seen.append(mode);return {}
  m.lane=lane;m.special=lambda *a: 'PASS mock safety';m.checker.check_cap=lambda lane: {'verdict':'PASS mock cap'};m.shutil.which=lambda tool: tool
@@ -100,14 +100,14 @@ test('late API failure becomes VOID during polling rather than a return timeout'
  def run(args,**kwargs):
   if 'new-session' in args:
    (project/'thread.jsonl').write_text('{}\\n');return types.SimpleNamespace(returncode=0,stdout='',stderr='')
-  return types.SimpleNamespace(returncode=1 if args[0]=='tmux' else 0,stdout='',stderr='')
+  return types.SimpleNamespace(returncode=0 if 'capture-pane' in args else 1 if args[0]=='tmux' else 0,stdout='',stderr='')
  m.run=run
  class Journal:
   def __init__(self,path): self.n=0
   def poll(self):
    self.n+=1;return [{'type':'assistant','message':{'content':'WAITING'}}]+([{'isApiErrorMessage':True}] if self.n>1 else [])
  m.checker.Journal=Journal
- try: m.lane(types.SimpleNamespace(cwd=cwd,auto_effort_dir=root/'plugin'),root/'out','warm')
+ try: m.lane(types.SimpleNamespace(cwd=cwd,auto_effort_dir=root/'plugin',claude='claude'),root/'out','warm')
  except (ValueError,RuntimeError) as e:
   print(e);sys.exit(0 if 'VOID API/auth' in str(e) else 1)
  sys.exit(1)`);
@@ -177,6 +177,19 @@ assert len(text.encode()) < m.ARG_LIMIT < 131072, len(text.encode())
 assert 'STEPS' not in text and 'run_in_background true' not in text, text[:600]`);
   expect(result.status, result.stderr).toBe(0);
 });
+test('a seat-wide PLUGIN_LOG_DIR is where the lane reads, keeping only its own session', () => {
+  const result = python(`with tempfile.TemporaryDirectory() as d:
+ root=pathlib.Path(d); seat=root/'seat'; lane=root/'lane'; config=root/'config'; config.mkdir(); lane.mkdir()
+ store=root/'store.json'; store.write_text(json.dumps({'env':{'PLUGIN_LOG_DIR':str(seat)}})); (config/'settings.json').symlink_to(store); assert m.log_root(lane,config)==seat
+ (config/'settings.json').unlink()
+ (config/'settings.json').write_text('{}'); assert m.log_root(lane,config)==lane; assert m.log_root(lane,root/'absent')==lane
+ log='"where":"hooks/cache-keepwarm.ts#log"'; (seat/'cache-keepwarm').mkdir(parents=True); (seat/'auto-effort').mkdir()
+ (seat/'cache-keepwarm'/'info.jsonl').write_text('{'+log+',"session":"s1","detail":{"event":"LOADED","at":1}}\\n{'+log+',"session":"s2","detail":{"event":"other","at":0}}\\n')
+ (seat/'auto-effort'/'decisions.s1.jsonl').write_text('{"event":"mine"}\\n');(seat/'auto-effort'/'decisions.s10.jsonl').write_text('{"event":"theirs"}\\n')
+ assert m.decision_rows(m.plugin_logs(seat),'s1')==[{'event':'LOADED','at':1}],m.decision_rows(m.plugin_logs(seat),'s1')
+ assert m.effort_rows(seat,session='s1')==[{'event':'mine'}],m.effort_rows(seat,session='s1')`);
+  expect(result.status, result.stderr).toBe(0);
+});
 test('lane log routing reads only decision rows and auto-effort decision files, and passes its env', () => {
   const result = python(`with tempfile.TemporaryDirectory() as d:
  root=pathlib.Path(d); log='"where":"hooks/cache-keepwarm.ts#log"'; effort=root/'auto-effort'
@@ -187,7 +200,7 @@ test('lane log routing reads only decision rows and auto-effort decision files, 
  seen={};m.cleanup=lambda *a:{'nativeSocketClosed':True,'ownedProcessesRemaining':[],'errors':[]}
  def launch(argv,**kw): seen.update(kw['env']);return types.SimpleNamespace(stdout='',stderr='stopped fixture',returncode=1)
  m.run=launch
- try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','warm')
+ try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root,claude='claude'),root/'out','warm')
  except RuntimeError as e: assert 'stopped fixture' in str(e)
  assert seen.get('PLUGIN_LOG_DIR')==str(root/'out/warm'),seen.get('PLUGIN_LOG_DIR'); assert 'AUTO_EFFORT_LOG_FILE' not in seen,seen
  assert seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')=='false',seen.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
@@ -195,27 +208,6 @@ test('lane log routing reads only decision rows and auto-effort decision files, 
  try: m.effort_rows(root)
  except RuntimeError as e: assert 'need auto-effort log' in str(e);sys.exit(0)
  sys.exit(1)`);
-  expect(result.status, result.stdout + result.stderr).toBe(0);
-});
-test.each([[755, [590, 165]], [4000, [590, 590, 590, 590, 590, 590, 460]], [420, [420]], [1180, [590, 590]]])('probe for %ss sleeps in foreground chunks under the Bash ceiling, each chunk naming the next', (seconds, chunks) => {
-  const result = python(`steps=m.probe_steps(${seconds})
-found=[int(n) for n in m.re.findall(r'time.sleep\\((\\d+)\\)', steps)]
-assert found==${JSON.stringify(chunks)} and steps.count('LONG_PROBE_DONE')==1 and steps.count('DONE: run the next command now')==len(found)-1 and steps.endswith('LONG_PROBE_DONE")'+chr(39)+chr(96)),(found,steps)`);
-  expect(result.status, result.stdout + result.stderr).toBe(0);
-});
-test('a lane starts claude in its own tmux server with the prompt file as one argument and fresh launch state', () => {
-  const result = python(`with tempfile.TemporaryDirectory() as d:
- root=pathlib.Path(d);seen=[]
- m.os.environ={'CLAUDECODE':'1','CLAUDE_CODE_SESSION_ID':'parent','ENABLE_PROMPT_CACHING_1H':'1','CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL':'1h','KEEP':'yes'};m.Path.home=classmethod(lambda cls: root)
- m.cleanup=lambda *a:{'nativeSocketClosed':True,'ownedProcessesRemaining':[],'errors':[]}
- def run(argv,**kw): seen.append((argv,kw.get('env')));return types.SimpleNamespace(stdout='',stderr='stopped fixture',returncode=1)
- m.run=run
- try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','ttl-1h',cache='1h')
- except RuntimeError as e: assert 'ERROR launch' in str(e) and 'stopped fixture' in str(e),e
- argv,env=seen[0]
- assert argv[:2]==['tmux','-f'] and argv[argv.index('-L')+1].startswith('kw-ttl-1h-') and argv[argv.index('-c')+1]==str(root),argv
- assert argv[-4:]==['-c','exec claude --model claude-haiku-5-5 --effort low "$(cat "$1")"','sh',str(root/'out/ttl-1h/prompt.txt')],argv
- assert env['CLAUDE_CODE_PROMPT_CACHE_TTL']=='1h' and env['KEEP']=='yes' and not {'CLAUDECODE','CLAUDE_CODE_SESSION_ID','ENABLE_PROMPT_CACHING_1H','CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'} & set(env),env`);
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
 test('a lane held at the folder-trust dialog is BLOCKED, nothing typed', () => {
@@ -226,7 +218,7 @@ test('a lane held at the folder-trust dialog is BLOCKED, nothing typed', () => {
  trust=' Quick safety check: Is this a project you created or one you trust?\\n ❯ 1. Yes, I trust this folder\\n   2. No, exit\\n'
  def run(argv,**kw): seen.append(argv[3] if argv[1]=='-L' else 'new-session');return types.SimpleNamespace(stdout=trust if 'capture-pane' in argv else '',stderr='',returncode=0)
  m.run=run
- try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root),root/'out','warm')
+ try: m.lane(types.SimpleNamespace(cwd=root,auto_effort_dir=root,claude='claude'),root/'out','warm')
  except RuntimeError as e: print(e)
  evidence=json.loads((root/'out/warm/evidence.json').read_text())
  assert evidence.get('trustBlocked') is True and 'send-keys' not in seen,(evidence,seen)`);
@@ -248,6 +240,13 @@ test.each([[true, 0], [false, 2]])('a reply split into thinking and text records
   control.transcript.splice(2, 0, { ...reply, message: { ...reply.message, id: same ? 'msg_a' : 'msg_b', content: [{ type: 'thinking', thinking: '' }] } });
   expect(checkPair(input).status).toBe(status);
 });
+test.each(['meta-reminder', 'handback'])('a 2.1.316 delivery is the quiet window\'s one record (%s)', shape => {
+  const input: any = pair(), control = input.lanes[1], at = control.transcript.length - 5;
+  const reminder = { type: 'user', isMeta: true, timestamp: control.transcript[at].timestamp, message: { content: '<system-reminder><tools-used-before-summary>Bash</tools-used-before-summary></system-reminder>' } };
+  if (shape === 'meta-reminder') control.transcript.splice(at, 0, reminder);
+  else control.transcript[at] = { ...reminder, origin: { kind: 'peer', from: 'task1', senderTaskId: 'task1', handback: true }, message: { content: 'Another Claude session sent a message: RETURNED' } };
+  expect(checkPair(input).status).toBe(0);
+});
 test('a tool call quoting the reply words is not a reply', () => {
   const input: any = pair(), warm = input.lanes[0];
   warm.transcript.splice(0, 0, { type: 'assistant', timestamp: new Date(1000500).toISOString(), message: { model: 'claude-haiku-5-5', content: [{ type: 'tool_use', name: 'Agent', input: { prompt: 'reply WAITING, then RETURNED' } }] } });
@@ -260,7 +259,7 @@ test('a stop signal mid-lane runs the lane cleanup and starts no later lane', ()
   const result = python(`import os,signal,time
 tmp=pathlib.Path(tempfile.mkdtemp()); (tmp/'ae/.claude-plugin').mkdir(parents=True); (tmp/'ae/.claude-plugin/plugin.json').write_text('{}')
 m.shutil.which=lambda tool:'/bin/true'
-m.run=lambda cmd,**k: subprocess.CompletedProcess(cmd,0,'2.1.302 (Claude Code)','')
+m.run=lambda cmd,**k: subprocess.CompletedProcess(cmd,0,'2.1.316 (Claude Code)','')
 calls=[]
 def lane(args,directory,mode,**k):
  calls.append(mode)

@@ -5,7 +5,7 @@
 **Keeps Claude Code prompt caches warm during background waits with visible pokes, for the main chat and waiting sub-agents, capped per wait and each under its own rewrite-saving budget.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.6.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.2-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>
@@ -88,7 +88,7 @@ External status-line readers get one metadata-only file per **main session**, ne
 ${XDG_STATE_HOME:-$HOME/.local/state}/cache-keepwarm/sessions/{sessionId}.json
 ```
 
-`CACHE_KEEPWARM_STATE_DIR` overrides the sessions directory itself (an absolute path, not a parent). Blank is absent. This transport variable is not a `/config` option. Node.js 20+ must be on Claude Code's `PATH` for the file writer. A same-directory, exclusive temporary file (mode `0600`) is renamed atomically over the destination; new directories use `0700`. Writers serialize changes within the process, skip unchanged projections, and publish on main status changes and `/keepwarm on|off`. Files contain no task labels, command text, messages, or sub-agent views.
+`CACHE_KEEPWARM_STATE_DIR` overrides the sessions directory itself (an absolute path, not a parent). Blank is absent. A relative `CACHE_KEEPWARM_STATE_DIR` or `XDG_STATE_HOME` is skipped for the next in line and named in the status, as `state directory: CACHE_KEEPWARM_STATE_DIR not absolute; using {directory}`. This transport variable is not a `/config` option. Node.js 20+ must be on Claude Code's `PATH` for the file writer. A same-directory, exclusive temporary file (mode `0600`) is renamed atomically over the destination; new directories use `0700`. Writers serialize changes within the process, skip unchanged projections, and publish on main status changes and `/keepwarm on|off`. Files contain no task labels, command text, messages, or sub-agent views.
 
 ### v1 fields
 
@@ -159,14 +159,14 @@ Precedence is variable, then option, then default. A blank variable is absent; b
 
 The decision log is on by default and has no option or plugin variable: it writes under `$PLUGIN_LOG_DIR/cache-keepwarm` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/cache-keepwarm/logs`, and is off, said once, when neither resolves. It appends one JSON row per decision to `errors.jsonl` (a failed poke, timer, inventory or store write), `warnings.jsonl` or `info.jsonl` (every other decision), the directory `0700` and the files `0600`, written through `$.process.run` because Claude Code's file write replaces a whole file. A row's keys are `ts`, `plugin`, `level`, `event`, `msg`, `where`, `session` and `detail`, at most 4096 bytes; `detail` is the metadata row the plugin used to write (event, epoch, items, ttl, context, spent, reason, pokes, usage, ledger, session ledger). A level file past 20 MiB moves to `{file}.1`, older generations shifting up to `.5`, and a `log-capped` row goes to `warnings.jsonl`. A failed write keeps its rows, up to 2,000, for the next write; past that the oldest go, and the next successful write logs a `plugin-log-rows-dropped` error row counting them. Writers share a lock in the log directory, waited on up to 10 seconds. The screen shows an error and one line per failing streak; every other row stays in its file. A directory that other users can write still leaves a gap between check and write.
 
-Persistence keeps one snapshot per Claude Code process (`session:{session id}:{instance}`) of the last-use anchor and the numeric ledger, with its save time. A resumed session restores the newest valid snapshot for its own session id. Snapshots that are invalid, or older than seven days, are deleted when a session starts. A snapshot never restores the `/keepwarm` override, a timer, an admission or a grant. The plugin store is one JSON file shared by all processes; how concurrent writes from two processes interleave is unmeasured.
+Persistence keeps one snapshot per Claude Code process (`session:{session id}:{instance}`) of the last-use anchor and the numeric ledger, with its save time. A resumed session restores the newest valid snapshot for its own session id. Snapshots older than seven days by their save time are deleted when a session starts, valid or not; one this version cannot read (another version, a damaged record) stays until then, one with no save time stays, and one of the session's own id is shown as `resume refused (invalid-record)`. A snapshot never restores the `/keepwarm` override, a timer, an admission or a grant. The plugin store is one JSON file shared by all processes; how concurrent writes from two processes interleave is unmeasured.
 
 ## TTL resolution
 
 The cache lifetime is resolved per episode, first match wins:
 
 1. `FORCE_PROMPT_CACHING_5M=1`: 5m.
-2. `CLAUDE_CODE_PROMPT_CACHE_TTL` equal to `5m` or `1h`: that value.
+2. `CLAUDE_CODE_PROMPT_CACHE_TTL` equal to `5m` or `1h`: that value. Any other non-blank value of it, or of `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`, is skipped and named in the status: `CLAUDE_CODE_PROMPT_CACHE_TTL="30m" ignored: not 5m or 1h`.
 3. The session's observed lifetime: a request sent 330,000 to 3,300,000 ms after the previous one that read at least 90% of the previous context means 1h; below 90% means 5m; outside that gap there is no evidence.
 4. `ENABLE_PROMPT_CACHING_1H=1`: 1h.
 5. Otherwise 5m, shown as `TTL assumed 5m`. An assumed 5m is never late, only more frequent.
@@ -205,7 +205,7 @@ The budget is an admission forecast plus actual accounting, not a hard realized-
 - Sub-agent poking reaches only idle loops held on attributable pending background work. A foreground tool call cannot be poked. Ownership comes from that agent's successful background tool results or native child-parent links, not the session-wide Stop task list. Missing attribution refuses the poke. A native send queues a message, not a guaranteed model response; a poke not settled within one minute stops that episode.
 - The parent wake is accepted. Each sub-agent poke makes Claude Code send the spawning parent, main chat or nested agent, an interim task-notification, which starts one real parent turn; the forecast counts it, and every native delivery is preserved. The parent sees every sub-agent poke. The 100,000-token `subagentMinContext` keeps it to agents whose rewrite outweighs that turn.
 - No wait on the user. Only tracked background work is kept warm.
-- 1h: the decision admits a 1h cache (`WARM_1H`). A request at 80% of the 1h lifetime refreshing the entry was measured on Claude Code 2.1.302 (a 4,017-second wait held by one such request); a 1h wait carried by a poke is not yet live-measured. A failed `ttl-1h` rerun turns 1h poking off, and a 1h episode then shows `not warming: 1h refresh unproven`.
+- 1h: the decision admits a 1h cache (`WARM_1H`). A request at 80% of the 1h lifetime refreshing the entry was measured on Claude Code 2.1.302 (a 4,017-second wait held by one such request) and again on 2.1.316 (a 4,044-second wait whose return read 98.4% from cache); a 1h wait carried by a poke is not yet live-measured. A failed `ttl-1h` rerun turns 1h poking off, and a 1h episode then shows `not warming: 1h refresh unproven`.
 - A plugin reload rewrites the cached prefix. When a plugin reloads mid-wait (observed after an installed plugin was updated), Claude Code re-renders the environment block near the start of every request (measured on 2.1.302: 48,126 to 49,901 characters), so the cache is lost for the chat and the poke alike; the poke then pays the rewrite, and the ledger accounts it.
 - Unknown wake behaviour. Claude Code gives a task no expected return time and no flag saying whether it can wake the chat; the plugin treats the four known kinds as waking and refuses the rest.
 - A shell or Monitor killed from the UI while the chat is idle may send no notification; its item is listed in each poke, where the model can see it, until the cap or the budget ends the wait.

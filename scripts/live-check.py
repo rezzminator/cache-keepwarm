@@ -162,6 +162,11 @@ def poke_items(text, n, total):
         raise ValueError('FAIL poke bullet: ' + json.dumps(text[:400]))
     return [m.group(2) for m in found]
 
+def handback(record):
+    """The task id a sub-agent's hand-back message names, None for any other record."""
+    origin = record.get('origin') if isinstance(record.get('origin'), dict) else {}
+    return origin.get('senderTaskId') if origin.get('kind') == 'peer' and origin.get('handback') is True else None
+
 def reply_window(lane):
     """The unique WAITING -> RETURNED window outside the plugin's own poke turns, its quiet-window proof and the return's
     cache-read ratio."""
@@ -176,10 +181,12 @@ def reply_window(lane):
     start, waiting = waits[0]
     # One API response can be written as several records (a thinking block, then the text); they share message.id.
     reply_id = reply.get('message', {}).get('id')
-    between = [r for i, r in kept if start < i < end and r.get('type') in ('user', 'assistant') and not (reply_id and r.get('type') == 'assistant' and r.get('message', {}).get('id') == reply_id)]
-    if start >= end or len(between) != 1 or between[0].get('type') != 'user' or '<task-notification' not in json.dumps(between[0].get('message', {}).get('content', [])):
+    # Claude Code's meta records (a tools-used reminder before a notification) ride the delivery's own request; the
+    # delivery is a task notification or, since 2.1.316, a sub-agent's hand-back message (a meta record of origin peer).
+    between = [r for i, r in kept if start < i < end and r.get('type') in ('user', 'assistant') and not (reply_id and r.get('type') == 'assistant' and r.get('message', {}).get('id') == reply_id) and not (r.get('isMeta') and not handback(r))]
+    if start >= end or len(between) != 1 or between[0].get('type') != 'user' or not (handback(between[0]) or '<task-notification' in json.dumps(between[0].get('message', {}).get('content', []))):
         raise ValueError('FAIL transcript quiet window: extra main traffic or missing notification')
-    task = re.search(r'<task-id>([^<]+)</task-id>', json.dumps(between[0].get('message', {}).get('content', [])))
+    task = handback(between[0]) or re.search(r'<task-id>([^<]+)</task-id>', json.dumps(between[0].get('message', {}).get('content', [])))
     message = reply['message']
     if message.get('model') != 'claude-haiku-5-5':
         raise ValueError('FAIL wrong model: ' + str(message.get('model')))
@@ -188,7 +195,7 @@ def reply_window(lane):
     if any(not isinstance(n, (int, float)) or not 0 <= n < float('inf') for n in counts) or sum(counts) <= 0:
         raise ValueError('FAIL return usage absent or invalid')
     ratio = usage['cache_read_input_tokens'] / sum(counts)
-    lane['returnEvidence'] = {'path': lane.get('transcriptPath'), 'line': end + 1, 'usage': usage, 'ratio': ratio, 'taskId': task.group(1) if task else None}
+    lane['returnEvidence'] = {'path': lane.get('transcriptPath'), 'line': end + 1, 'usage': usage, 'ratio': ratio, 'taskId': task if isinstance(task, str) else task.group(1) if task else None}
     return (timestamp(waiting), timestamp(reply)), ratio
 
 def main_log(lane):

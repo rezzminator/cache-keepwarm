@@ -1,6 +1,6 @@
 import type { EngineInterface, Register, Timer } from 'claude-code';
 import { resolveOptions, type Options } from '../src/options.ts';
-import { resolveTtl, observeTtl, type Ttl, type TtlResolution, type TtlEnv } from '../src/ttl.ts';
+import { resolveTtl, observeTtl, badTtl, type Ttl, type TtlResolution, type TtlEnv } from '../src/ttl.ts';
 import { fromStop, reconcile, ownedFromTool, warmReceipt, sanitizeLabel, firstSeen, type WaitItem, type EndedItem } from '../src/waits.ts';
 import { TTL_MS, WARM_1H, nextFireAt } from '../src/schedule.ts';
 import { budgetLedger, closeLedger, emptySessionLedger, recordWarm, recordOutcome, warmSpend, pokeForecast, wakeForecast, type Usage, type SessionLedger, type ClosedLedger } from '../src/budget.ts';
@@ -11,13 +11,13 @@ import { metaRow, type LogRow } from '../src/log.ts';
 import { PluginLogQueue, levelRow, pluginLogDir, type PluginLogLevel } from '../src/plugin-log.ts';
 import { compactFacts, compactOutcome, compactReset } from '../src/compact.ts';
 import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/pokes.ts';
-import { pokeMessage, formatWaiting, formatStopped, formatState, sessionState, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
+import { pokeMessage, formatWaiting, formatStopped, formatState, sessionState, stateDirectory, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
 type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: number; originalExpiry: number; context: number; model: string; spent: number; warms: number; epoch: number; lastPoke: number | null; failed?: string };
 /** The main chat's poke in flight: its text, the episode it serves and, once its turn started, that turn's id; `entered` once the submit
  * resolved, which Claude Code does when the poke's turn has started, so an unbound poke binds to the next main step. */
 type Poke = { text: string; episode: Episode; sessionId: string; turnId?: string; entered?: boolean };
 type WarmCharge = { a: SubState; epoch: number; at: number; text: string; wake: number; turnId?: string; episode: NonNullable<SubState['episode']>; sessionId: string; owner?: State };
-type State = { stateDir: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; plog: PluginLogQueue; stores: Promise<void>; instance: string; logError?: string; logOff?: boolean; inactive?: boolean; ended?: EndedItem; detail?: string };
+type State = { stateDir: string; stateWarning?: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; plog: PluginLogQueue; stores: Promise<void>; instance: string; logError?: string; logOff?: boolean; inactive?: boolean; ended?: EndedItem; detail?: string };
 async function readOptionEnv($: EngineInterface) {
   return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_STATUS: await $.env.get('CACHE_KEEPWARM_STATUS') };
 }
@@ -28,7 +28,7 @@ const validUsage = (u: Usage | undefined): u is Usage => !!u && [u.input_tokens,
 function mainPokes(s: State): PokeLimit { return { count: pokesFor(s.pokes, pokeKey((s.episode?.items ?? []).map(i => i.id))).count, max: s.options.maxPokes }; }
 function view(s: State): StatusView {
   const e = s.episode;
-  return { enabled: enabled(s), source: s.override === null ? 'launch' : 'session', reason: s.reason, pokes: mainPokes(s), items: (e?.items ?? []).map(i => ({ ...i, firstSeenAt: s.seen.get(i.id) ?? s.now })), now: s.now, warms: e?.warms ?? 0, nextInMs: s.nextAt - s.now, ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: s.anchor?.context ?? null, ledger: e ? budgetLedger({ context: e.context, ttl: s.ttl.ttl, spent: e.spent, warms: e.warms }) : null, session: s.session, lastOutcome: s.lastOutcome, warnings: [...(s.options.bad.length ? ['bad options: ' + s.options.bad.join(', ')] : []), ...(s.logError ? [s.logError] : [])] };
+  return { enabled: enabled(s), source: s.override === null ? 'launch' : 'session', reason: s.reason, pokes: mainPokes(s), items: (e?.items ?? []).map(i => ({ ...i, firstSeenAt: s.seen.get(i.id) ?? s.now })), now: s.now, warms: e?.warms ?? 0, nextInMs: s.nextAt - s.now, ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: s.anchor?.context ?? null, ledger: e ? budgetLedger({ context: e.context, ttl: s.ttl.ttl, spent: e.spent, warms: e.warms }) : null, session: s.session, lastOutcome: s.lastOutcome, warnings: [...(s.options.bad.length ? ['bad options: ' + s.options.bad.join(', ')] : []), ...badTtl(s.ttlEnv), ...(s.stateWarning ? [s.stateWarning] : []), ...(s.logError ? [s.logError] : [])] };
 }
 function paint($: EngineInterface, s: State) {
   const v = view(s), e = s.episode;
@@ -251,7 +251,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.override = null; s.anchor = null; s.observed = null; s.busy = false; s.typing = false; s.closing = null; s.seen.clear(); s.session = emptySessionLedger(); s.lastOutcome = null; s.logError = undefined;
     s.options = resolveOptions(options, await readOptionEnv($)); const logDir = pluginLogDir(await $.env.get('PLUGIN_LOG_DIR'), await $.env.get('HOME'), 'cache-keepwarm'); s.plog = new PluginLogQueue(logDir, 'cache-keepwarm'); s.logOff = logDir === undefined; s.ttlEnv = await readTtlEnv($); s.ttl = resolveTtl(s.ttlEnv, null); s.id = await $.session.id(); s.now = await $.clock.now();
-    s.stateDir = (await $.env.get('CACHE_KEEPWARM_STATE_DIR'))?.trim() || `${(await $.env.get('XDG_STATE_HOME'))?.trim() || `${await $.env.get('HOME')}/.local/state`}/cache-keepwarm/sessions`; s.stateLast = '';
+    const state = stateDirectory({ CACHE_KEEPWARM_STATE_DIR: await $.env.get('CACHE_KEEPWARM_STATE_DIR'), XDG_STATE_HOME: await $.env.get('XDG_STATE_HOME'), HOME: await $.env.get('HOME') }); s.stateDir = state.dir; s.stateWarning = state.warning; s.stateLast = '';
     $.command.register({ name: 'keepwarm', description: 'Control warming — /keepwarm [on|off|status] for this chat only; no argument shows state and spend.', argumentHint: '[on|off|status]', immediate: true });
     await restore($, s, true);
     if (s.options.bad.length) await plog($, s, 'error', 'bad-options', `bad options: ${s.options.bad.join(', ')}`, 'hooks/cache-keepwarm.ts#session.start', { bad: s.options.bad });
