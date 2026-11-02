@@ -235,6 +235,27 @@ def kill_chat(name, marker, socket):
             errors.append('socket verification: ' + str(error))
     return {'nativeSocketClosed': dead, 'ownedProcessesRemaining': left, 'killOutput': kill_output, 'errors': errors}
 
+def retire_sessions(project, before, directory):
+    """Moves the lane's sessions (each transcript and its {session}/ folder) out of the seat's projects store into the
+    evidence directory, once their chats are dead: left there, every lane would stay resumable in the seat's session
+    list. A lane's --cwd is its own, so the transcripts new since launch are the lane's."""
+    moved, errors = [], []
+    target = directory / 'sessions-retired'
+    try:
+        owned = sorted(set(project.glob('*.jsonl')) - before, key=str)
+    except OSError as error:
+        return moved, ['session enumeration: ' + str(error)]
+    for transcript in owned:
+        for path in (transcript, transcript.parent / transcript.stem):
+            if not path.exists():
+                continue
+            try:
+                target.mkdir(mode=0o700, exist_ok=True)
+                moved.append(shutil.move(str(path), str(target / path.name)))
+            except OSError as error:
+                errors.append(f'session retire {path}: {error}')
+    return moved, errors
+
 
 def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m', subagent=False, subagents=True, extra_env=None, release=False):
     directory = output / mode
@@ -393,6 +414,13 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
         evidence['failure'] = failure
     finally:
         evidence['cleanup'] = cleanup(name, marker, socket)
+        # Only a dead chat's session moves: a live one would write on into the moved file's old path.
+        if evidence['cleanup']['ownedProcessesRemaining'] == [] and evidence['cleanup']['nativeSocketClosed']:
+            evidence['cleanup']['sessionsRetired'], retire_errors = retire_sessions(project, before, directory)
+            evidence['cleanup']['errors'] += retire_errors
+            # The state lane's evidence names the store path; it now lives in the evidence directory.
+            if evidence.get('transcriptPath', '').startswith(str(project) + os.sep):
+                evidence['transcriptPath'] = str(directory / 'sessions-retired' / Path(evidence['transcriptPath']).name)
         (directory / 'evidence.json').write_text(json.dumps(evidence, indent=2))
         if not evidence['cleanup']['nativeSocketClosed'] or evidence['cleanup']['ownedProcessesRemaining'] != [] or evidence['cleanup']['errors']:
             raise RuntimeError((failure + '; ' if failure else '') + 'CLEANUP FAILED ' + name + ': ' + str(evidence['cleanup']))
