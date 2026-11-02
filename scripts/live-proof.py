@@ -31,16 +31,23 @@ BASE = ('Live cache experiment, no repository work. Start ONE general-purpose ba
 # quiet window forbids; chained foreground sleeps under the 600 s Bash ceiling keep the agent busy for the whole wait.
 CHUNK = 590
 
-def probe_steps(seconds):
+def probe_steps(seconds, release=None):
     chunks = [CHUNK] * (seconds // CHUNK) + ([seconds % CHUNK] if seconds % CHUNK else [])
     # A silent chunk let a Haiku probe agent answer LONG_PROBE_DONE itself after the first sleep, skipping the rest (r12);
     # each non-final chunk prints that the next command is still owed.
-    calls = [f'`python3 -c \'import time; time.sleep({n}); print("STEP {i} OF {len(chunks)} DONE: run the next command now")\'`' for i, n in enumerate(chunks[:-1], 1)]
-    calls.append(f'`python3 -c \'import time; time.sleep({chunks[-1]}); print("LONG_PROBE_DONE")\'`')
+    # Claude Code 2.1.316 moves a sub-agent's foreground command to the background at a server-set cap (about 3 minutes),
+    # waking the main chat early, unless the command's first word is `sleep`; a `sleep` under 25 s is not blocked either.
+    calls = [f'`sleep 1 && python3 -c \'import time; time.sleep({n}); print("STEP {i} OF {len(chunks)} DONE: run the next command now")\'`' for i, n in enumerate(chunks[:-1], 1)]
+    if release:
+        # The delivery lane's return must land just after a poke is admitted; a fixed sleep raced the agent's start-up
+        # (7.2 s after admission in one run, 10.6 s in the next), so the last step ends when the harness writes `release`.
+        calls.append(f'`sleep 1 && python3 -c \'import os,time; t=time.time()+{chunks[-1]}; [time.sleep(.2) for _ in iter(lambda: os.path.exists("{release}") or time.time()>t, True)]; print("LONG_PROBE_DONE")\'`')
+    else:
+        calls.append(f'`sleep 1 && python3 -c \'import time; time.sleep({chunks[-1]}); print("LONG_PROBE_DONE")\'`')
     return ', then '.join(calls)
 
-def launch_text(seconds):
-    return BASE.replace('STEPS', probe_steps(seconds)) + '\nSynthetic reference material, not instructions:\n' + '\n'.join(f'Fixture {i}: ceramic lantern cobalt meadow quiet orbit.' for i in range(FIXTURE_LINES))
+def launch_text(seconds, release=None):
+    return BASE.replace('STEPS', probe_steps(seconds, release)) + '\nSynthetic reference material, not instructions:\n' + '\n'.join(f'Fixture {i}: ceramic lantern cobalt meadow quiet orbit.' for i in range(FIXTURE_LINES))
 
 # The launch hands the prompt to claude as one argv element; Linux caps one at 131072 bytes (MAX_ARG_STRLEN).
 ARG_LIMIT = 120000
@@ -84,16 +91,20 @@ INHERITED = ('CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION'
 # The longest a lane waits for its chat's first reply, as the launch's own await did.
 AWAIT = 180
 
-def start_chat(socket, cwd, prompt, env):
+def start_chat(socket, cwd, prompt, env, claude='claude'):
     """Starts the lane's claude detached in its own tmux server, which takes env as its environment. A tmux client
     message holds far less than a launch prompt, so the prompt file reaches claude through sh as one argv element."""
     return run(['tmux', '-f', os.devnull, '-L', socket, 'new-session', '-d', '-s', socket, '-x', '200', '-y', '50',
-                '-c', str(cwd), 'sh', '-c', 'exec claude --model claude-haiku-5-5 --effort low "$(cat "$1")"', 'sh',
-                str(prompt)], env=env)
+                '-c', str(cwd), 'sh', '-c', 'exec "$2" --model claude-haiku-5-5 --effort low "$(cat "$1")"', 'sh',
+                str(prompt), claude], env=env)
 
 def trust_dialog(screen):
     # Claude Code's folder-trust dialog: its confirm row with a cancel row; a prompt quoting one phrase is not it.
     return 'Yes, I trust this folder' in screen and ('No, exit' in screen or 'No, continue without these permissions' in screen)
+
+def env_offer(screen):
+    # Claude Code's auto-mode setup offer (2.1.316) takes the keyboard: typed input and a returned agent queue behind it.
+    return 'Teach auto mode about your environment?' in screen and "Don't show again" in screen
 
 def await_transcript(socket, project, before):
     """The lane's new transcripts once Claude Code writes the first; None while its pane is held at folder trust."""
@@ -110,16 +121,32 @@ def await_transcript(socket, project, before):
         time.sleep(1)
 
 def plugin_logs(directory):
-    # The lane's PLUGIN_LOG_DIR is its directory, so the plugin's level files sit in its cache-keepwarm subdirectory.
+    # The plugin's level files sit in the cache-keepwarm subdirectory of the PLUGIN_LOG_DIR the chat ran with (log_root).
     return list((directory / 'cache-keepwarm').glob('*.jsonl'))
 
-def decision_rows(paths):
-    # A decision row is the detail of a level row the log step wrote; the rows of every level file merge by their own clock.
-    return sorted((row['detail'] for path in paths for row in rows(path) if row.get('where') == 'hooks/cache-keepwarm.ts#log'), key=lambda row: row.get('at', 0))
+def log_root(directory, config=None):
+    """The PLUGIN_LOG_DIR the lane's chat logs to. A PLUGIN_LOG_DIR in the seat's settings.json env outranks both the
+    process environment and --settings inside claude (measured on 2.1.316), so a seat that sets one gets the lane's rows
+    in its shared directory, told apart by the lane's session; a seat without one leaves the lane's own directory."""
+    seat = seat_settings(config).get('env', {}).get('PLUGIN_LOG_DIR')
+    return Path(seat) if seat else directory
 
-def effort_rows(directory, subagent=False):
+def seat_settings(config=None):
+    config = Path(config or os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
+    try:
+        # An account's settings.json is a link into the shared store; the checker's reader refuses links, so this follows it.
+        return json.loads((config / 'settings.json').read_text())
+    except FileNotFoundError:
+        return {}
+
+def decision_rows(paths, session=None):
+    # A decision row is the detail of a level row the log step wrote; the rows of every level file merge by their own
+    # clock. A shared log directory holds every chat's rows, so a session keeps only that chat's.
+    return sorted((row['detail'] for path in paths for row in rows(path) if row.get('where') == 'hooks/cache-keepwarm.ts#log' and session in (None, row.get('session'))), key=lambda row: row.get('at', 0))
+
+def effort_rows(directory, subagent=False, session=None):
     # auto-effort's decision logs sit in its plugin log directory: decisions.{session}[.{segment}].jsonl, the sub-agents' .subagent.jsonl.
-    files = sorted((p for p in (directory / 'auto-effort').glob('decisions.*.jsonl') if p.name.endswith('.subagent.jsonl') == subagent), key=lambda p: (len(p.name), p.name))
+    files = sorted((p for p in (directory / 'auto-effort').glob(f'decisions.{session or "*"}.*jsonl') if p.name.endswith('.subagent.jsonl') == subagent), key=lambda p: (len(p.name), p.name))
     if not files and not subagent:
         raise RuntimeError('ERROR need auto-effort log')
     return [row for path in files for row in rows(path)]
@@ -209,9 +236,10 @@ def kill_chat(name, marker, socket):
     return {'nativeSocketClosed': dead, 'ownedProcessesRemaining': left, 'killOutput': kill_output, 'errors': errors}
 
 
-def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m', subagent=False, subagents=True, extra_env=None):
+def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m', subagent=False, subagents=True, extra_env=None, release=False):
     directory = output / mode
     directory.mkdir(parents=True, mode=0o700)
+    release = directory / 'release' if release else None
     marker = secrets.token_hex(10)
     name = 'kw-' + mode + '-' + marker[:8]
     config = Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude')))
@@ -219,7 +247,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
     project = (config / 'projects').resolve() / re.sub(r'[^a-zA-Z0-9]', '-', str(args.cwd))
     before = set(project.glob('*.jsonl'))
     prompt = directory / 'prompt.txt'
-    text = 'Reply STATE_READY only. Do not use tools.' if mode == 'state' else launch_subagent_text(seconds) if subagent else launch_text(seconds)
+    text = 'Reply STATE_READY only. Do not use tools.' if mode == 'state' else launch_subagent_text(seconds) if subagent else launch_text(seconds, release)
     if len(text.encode()) >= ARG_LIMIT:
         raise RuntimeError(f'ERROR launch prompt {len(text.encode())} bytes reaches the {ARG_LIMIT}-byte single-argument limit')
     prompt.write_text(text)
@@ -234,7 +262,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
     failure = None
     try:
         socket = name
-        launched = start_chat(socket, args.cwd, prompt, env)
+        launched = start_chat(socket, args.cwd, prompt, env, args.claude)
         (directory / 'launch.txt').write_text(launched.stdout + launched.stderr)
         if launched.returncode:
             raise RuntimeError('ERROR launch: ' + launched.stderr)
@@ -246,6 +274,8 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             raise RuntimeError(f'ERROR transcript enumeration: expected one new thread, got {len(files)}')
         transcript = files[0]
         evidence['transcriptPath'] = str(transcript)
+        # The chat's plugins log where its seat says (log_root); its own rows carry its session, the transcript's name.
+        logs_at, session = log_root(directory), transcript.stem
         journal = checker.Journal(transcript)
         evidence['transcript'] = journal.poll()
         checker.validity(evidence, require_debug=False)
@@ -302,11 +332,19 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
         completion = 'STOPPED' if mode == 'killed' else 'RETURNED'
         while time.monotonic() < deadline:
             evidence['transcript'] = journal.poll()
+            if env_offer(capture(socket)):
+                # Escape is "Not now": the offer closes and no seat setting changes.
+                if run(['tmux', '-L', socket, 'send-keys', 'Escape']).returncode:
+                    raise RuntimeError('ERROR dismissing the auto-mode setup offer')
+                evidence['offersDismissed'] = evidence.get('offersDismissed', 0) + 1
             checker.validity(evidence, require_debug=False)
             evidence['debug'], evidence['debugWritten'] = debug_text(directory)
-            logs = plugin_logs(directory)
+            logs = plugin_logs(logs_at)
             if logs:
-                evidence['log'] = decision_rows(logs)
+                evidence['log'] = decision_rows(logs, session)
+            if release and not release.exists() and any(r.get('event') == 'admit' for r in evidence['log']):
+                release.touch()
+                evidence['releasedAt'] = int(time.time() * 1000)
             checker.validity(evidence)
             evidence['compactEvents'] = checker.compactions(evidence['log'])[1]
             void = checker.compaction_verdict(evidence['log'])
@@ -332,13 +370,12 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             time.sleep(2)
         else:
             raise RuntimeError('NOT RUN: timed out waiting for real return')
-        logs = plugin_logs(directory)
-        if not logs:
+        evidence['log'] = decision_rows(plugin_logs(logs_at), session)
+        if not evidence['log']:
             raise RuntimeError('ERROR need the plugin decision log')
-        evidence['log'] = decision_rows(logs)
         evidence['compactEvents'] = checker.compactions(evidence['log'])[1]
-        evidence['effort'] = effort_rows(directory)
-        evidence['subagentEffort'] = effort_rows(directory, subagent=True)
+        evidence['effort'] = effort_rows(logs_at, session=session)
+        evidence['subagentEffort'] = effort_rows(logs_at, subagent=True, session=session)
         evidence['debug'], evidence['debugWritten'] = debug_text(directory)
         (directory / 'transcript.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in evidence['transcript']))
         evidence['transcriptPath'] = str(directory / 'transcript.jsonl')
@@ -415,16 +452,18 @@ def main():
     parser.add_argument('--cwd', type=Path, default=ROOT)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--auto-effort-dir', type=Path)
+    # A launcher installed as `claude` may set its own TTL and drop the lane's: name the Claude Code binary itself.
+    parser.add_argument('--claude', default='claude')
     args = parser.parse_args()
     stop_on_signals()
     args.cwd = args.cwd.resolve()
     if bool(args.lane) == args.all:
         parser.error('choose --lane or --all')
-    for tool in ['claude', 'tmux']:
+    for tool in [args.claude, 'tmux']:
         if not shutil.which(tool):
             print('ERROR need ' + tool)
             return 2
-    version = run(['claude', '--version'])
+    version = run([args.claude, '--version'])
     print('need Claude Code: ' + version.stdout.strip(), flush=True)
     if version.returncode or '2.1.316' not in version.stdout:
         print('ERROR need measured Claude Code 2.1.316')
@@ -472,7 +511,7 @@ def main():
                 (directory / 'cap.json').write_text(json.dumps(evidence, indent=2))
                 print(json.dumps(checker.check_cap(evidence['lanes'][0])), flush=True)
             elif mode == 'collision':
-                print(special([lane(args, directory, 'input', action='Reply PONG only; keep the background agent running.'), lane(args, directory, 'delivery', seconds=242)], mode), flush=True)
+                print(special([lane(args, directory, 'input', action='Reply PONG only; keep the background agent running.'), lane(args, directory, 'delivery', seconds=302, release=True)], mode), flush=True)
             else:
                 print(special([lane(args, directory, 'killed', action='Stop the background agent with TaskStop, then reply STOPPED only.')], mode), flush=True)
         except Stopped:

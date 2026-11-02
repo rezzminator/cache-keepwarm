@@ -2,7 +2,11 @@
 
 Every release of cache-keepwarm. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-keepwarm--v<version>`, with a GitHub release carrying the section below.
 
-## [0.6.2] — 2026-11-01
+## [0.6.2] — 2026-11-02
+
+### Changed
+
+- The 1h cache refresh is re-measured on Claude Code 2.1.316: a 4,044-second wait returned reading 98.4% from cache, so 1h poking stays on.
 
 ### Fixed
 
