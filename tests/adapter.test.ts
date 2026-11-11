@@ -3,11 +3,11 @@ import { Harness, pokeText as poke } from './stand-in.ts';
 test('loads native controls, arms once, pokes the main chat visibly and accounts actual spend', async () => {
   const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm();
   expect(h.loadError).toBeUndefined(); expect(h.pending).toHaveLength(1);
-  expect(h.pending[0]?.at).toBe(1792247650124); expect(h.status).toContain('waiting on agent'); expect(h.status).toContain('pokes 0/4');
+  expect(h.pending[0]?.at).toBe(1792247650124); expect((await h.command('status')).text).toContain('warming [eligible]');
   await h.advance(240000);
   expect(h.lists).toBe(1); expect(h.submits).toEqual([{ text: poke('1/4', '- agent `a`: Audit sk-test-123, pending 4m') }]);
   await h.pokeReply(); expect(h.pending).toHaveLength(1); expect(h.pending[0]?.at).toBe(h.now + 240000);
-  expect(h.status).toContain('pokes 1/4'); expect(h.rows().some((r: any) => r.event === 'poke' && r.spent === 6628.5)).toBe(true);
+  expect(h.rows().some((r: any) => r.event === 'poke' && r.spent === 6628.5)).toBe(true);
   expect(JSON.stringify(h.rows())).not.toContain('sk-test-123');
   expect(h.commands).toMatchObject([{ name: 'keepwarm', immediate: true, argumentHint: '[on|off|status]' }]);
 });
@@ -21,14 +21,14 @@ test('the cap stops at N pokes on an unchanged wait and says so in the status, /
   const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs', CACHE_KEEPWARM_MAX_POKES: '2' }); await h.arm();
   await h.advance(240000); await h.pokeReply(); await h.advance(240000); await h.pokeReply();
   expect(h.submits.map(s => s.text.slice(0, 19))).toEqual(['Keep-warm poke 1/2:', 'Keep-warm poke 2/2:']);
-  expect(h.pending).toHaveLength(0); expect(h.status).toContain('poke limit reached 2/2');
+  expect(h.pending).toHaveLength(0);
   expect((await h.command('status')).text).toContain('poke limit reached 2/2');
   expect(h.rows().some((r: any) => r.reason === 'poke-limit' && r.pokes?.count === 2 && r.pokes?.max === 2)).toBe(true);
   await h.advance(900000); expect(h.submits).toHaveLength(2);
 });
 test.each(['prompt', 'turn', 'notification'])('real activity (%s) after a reached limit gives the wait fresh pokes', async kind => {
   const h = new Harness({}, { CACHE_KEEPWARM_MAX_POKES: '1' }); await h.arm(); await h.advance(240000); await h.pokeReply();
-  expect(h.status).toContain('poke limit reached 1/1');
+  expect((await h.command('status')).text).toContain('poke limit reached 1/1');
   if (kind === 'prompt') await h.emit('prompt.submit', { text: 'Go on', origin: { kind: 'composer' } });
   if (kind === 'notification') await h.emit('session.receive', { text: '<task-notification>progress</task-notification>', origin: { kind: 'task-notification' } });
   await h.step(); await h.stop(); await h.advance(240000);
@@ -48,7 +48,7 @@ test('a later different wait in a long-lived chat gets its own N pokes', async (
   await h.emit('session.receive', { text: '<task-notification>done</task-notification>', origin: { kind: 'task-notification' } }); await h.step();
   const later = [{ id: 'later', type: 'shell', status: 'running', description: 'Later', command: 'sleep 900' }]; await h.stop(later); await h.advance(240000);
   expect(h.submits.at(-1)!.text).toBe(poke('1/1', '- command `later`: sleep 900, pending 4m')); await h.pokeReply({ tasks: later });
-  expect(h.status).toContain('poke limit reached 1/1');
+  expect((await h.command('status')).text).toContain('poke limit reached 1/1');
 });
 test('the poke turn is recognised by its start alone when the calling hook skips its own submit', async () => {
   const h = new Harness(); await h.arm(); await h.advance(240000); await h.pokeReply({ hook: false });
@@ -69,7 +69,7 @@ test.each(['drop', 'throw', 'aborted', 'usage-missing'])('poke failure %s never 
   await h.advance(240000); expect(h.submits).toHaveLength(1);
   if (kind === 'aborted') await h.pokeReply({ reason: 'aborted' }); if (kind === 'usage-missing') await h.pokeReply({ usage: null });
   expect(h.pending).toHaveLength(0);
-  expect(h.status).toContain({ drop: 'poke failed (dropped: refused by a hook)', throw: 'poke failed (threw: boom)', aborted: 'poke failed (aborted)', 'usage-missing': 'poke failed (usage unknown)' }[kind]);
+  expect((await h.command('status')).text).toContain({ drop: 'poke failed (dropped: refused by a hook)', throw: 'poke failed (threw: boom)', aborted: 'poke failed (aborted)', 'usage-missing': 'poke failed (usage unknown)' }[kind]);
   await h.advance(900000); expect(h.submits).toHaveLength(1);
 });
 test('commands override launch default but on never arms until next Stop', async () => {
@@ -89,7 +89,7 @@ test('draft, terminal refinement and missing native inventory refuse visibly', a
     if (kind === 'missing') await h.emit('classic.Stop', {}); else await h.stop([{ id: 'a', type: 'subagent', status: 'running', description: 'X' }]);
     if (kind === 'ended') await h.advance(240000);
     expect(h.submits).toHaveLength(0); expect(h.pending).toHaveLength(0);
-    expect(h.status).toContain({ draft: 'typing', ended: 'killed', missing: 'background_tasks' }[kind]);
+    expect((await h.command('status')).text).toContain({ draft: '[typing]', ended: '[ended]', missing: 'no background_tasks [inventory-unknown]' }[kind]);
   }
 });
 test('a log failure is visible once and does not prevent warming', async () => {
@@ -101,7 +101,7 @@ test('same session restore shows age, but no grant; zero cache step invalidates'
   const resumed = new Harness(); resumed.values = entries; resumed.now = h.now + 1000; await resumed.start();
   expect((await resumed.command('status'))?.text).toContain('[resumed]'); expect(resumed.pending).toHaveLength(0);
   await resumed.step({ input_tokens: 50000, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'haiku' }); await resumed.stop();
-  expect(resumed.pending).toHaveLength(0); expect(resumed.status).toContain('no main request');
+  expect(resumed.pending).toHaveLength(0); expect((await resumed.command('status')).text).toContain('no main request');
 });
 test('a resumed session paints no status line, while /keepwarm status still says resumed', async () => {
   const h = new Harness(); await h.arm(); const entries = new Map(h.values);
@@ -134,7 +134,7 @@ test('slow admission preparation cannot send at or beyond the safety deadline', 
   const h = new Harness(); await h.arm();
   h.engine.agent.list = async () => { h.now += 60000; return h.agents as any; };
   await h.advance(240000);
-  expect(h.submits).toHaveLength(0); expect(h.status).toContain('cache cold');
+  expect(h.submits).toHaveLength(0); expect((await h.command('status')).text).toContain('cache cold [cache-cold]');
 });
 test('a stale preparing fire never submits once a newer wait replaced it', async () => {
   const h = new Harness(); await h.arm();
@@ -160,19 +160,18 @@ test.each(['clear', 'resume'])('continuing %s separates identity, rows and obser
   const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000); await h.pokeReply();
   h.id = 'session-2'; await h.emit('session.end', { reason }, { sessionId: h.id }); await h.step(); await h.stop();
   expect(h.snapshot('session-2')).toBeDefined();
-  expect(h.writes.map(text => JSON.parse(text)).some(row => row.session === 'session-2' && row.detail.event === 'poke')).toBe(false); expect(h.status).toContain('waiting on');
+  expect(h.writes.map(text => JSON.parse(text)).some(row => row.session === 'session-2' && row.detail.event === 'poke')).toBe(false); expect((await h.command('status')).text).toContain('warming [eligible]');
 });
-test('bad launch variables remain observable after normal status painting', async () => {
+test('bad launch variables stay painted and named in /keepwarm status', async () => {
   const h = new Harness({}, { CACHE_KEEPWARM_MAX_POKES: 'bad', CLAUDE_CODE_PROMPT_CACHE_TTL: '30m' }); await h.arm();
   expect(h.status).toContain('CACHE_KEEPWARM_MAX_POKES'); expect((await h.command('status')).text).toContain('CACHE_KEEPWARM_MAX_POKES');
-  expect(h.status).toContain('pokes 0/4');
   expect(h.status?.split(' · ').filter(part => part.startsWith('CLAUDE_CODE_'))).toEqual(['CLAUDE_CODE_PROMPT_CACHE_TTL="30m" ignored: not 5m or 1h']);
 });
-test('status off paints no waiting text, while a bad option stays visible', async () => {
-  const h = new Harness({ status: false }); await h.arm();
+test('the status line carries only problems: a wait paints nothing, a bad option is painted', async () => {
+  const h = new Harness(); await h.arm();
   expect(h.pending).toHaveLength(1); expect(h.statuses.filter(Boolean)).toEqual([]);
-  const bad = new Harness({ status: false }, { CACHE_KEEPWARM_MAX_POKES: 'bad' }); await bad.arm();
-  expect(bad.status).toContain('CACHE_KEEPWARM_MAX_POKES'); expect(bad.status).not.toContain('waiting on');
+  const bad = new Harness({}, { CACHE_KEEPWARM_MAX_POKES: 'bad' }); await bad.arm();
+  expect(bad.status).toBe('bad options: CACHE_KEEPWARM_MAX_POKES');
 });
 test('a poke completing after its session ended is never charged into the next one', async () => {
   const h = new Harness({}, { PLUGIN_LOG_DIR: 'logs' }); await h.arm(); await h.advance(240000);

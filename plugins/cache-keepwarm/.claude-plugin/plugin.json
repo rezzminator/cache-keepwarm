@@ -45,12 +45,6 @@
       "title": "Minimum sub-agent context tokens",
       "description": "Do not poke a sub-agent with a smaller context; with the parent wake, a smaller rewrite is not worth saving.",
       "default": 100000
-    },
-    "status": {
-      "type": "boolean",
-      "title": "Show the status text",
-      "description": "Show the waiting and stopped status text under the prompt. Off, it paints only problems (bad options, a failed log write); /keepwarm status and the session-state JSON are unaffected.",
-      "default": true
     }
   }
 }

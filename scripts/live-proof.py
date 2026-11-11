@@ -158,6 +158,14 @@ def debug_text(directory):
         return '', False
     return checker.read_text(path), True
 
+def session_state(directory, session, moment):
+    """The chat's public v1 session-state record at one moment of the wait, the status a status line renders, saved as
+    {moment}-state.json; None when the plugin has written none."""
+    path = directory / 'sessions' / (session + '.json')
+    record = json.loads(checker.read_text(path)) if path.is_file() else None
+    (directory / (moment + '-state.json')).write_text(json.dumps(record, indent=2))
+    return record
+
 def capture(socket):
     result = run(['tmux', '-L', socket, 'capture-pane', '-p'])
     if result.returncode:
@@ -372,12 +380,10 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             if void:
                 raise RuntimeError('VOID ' + void)
             elapsed = time.monotonic() - started
-            if elapsed >= 60 and 'waitingCapture' not in evidence:
-                evidence['waitingCapture'] = capture(socket)
-                (directory / 'waiting.capture').write_text(evidence['waitingCapture'])
-            if mode == 'cap' and elapsed >= 600 and 'limitCapture' not in evidence:
-                evidence['limitCapture'] = capture(socket)
-                (directory / 'limit.capture').write_text(evidence['limitCapture'])
+            if elapsed >= 60 and 'waitingState' not in evidence:
+                evidence['waitingState'] = session_state(directory, session, 'waiting')
+            if mode == 'cap' and elapsed >= 600 and 'limitState' not in evidence:
+                evidence['limitState'] = session_state(directory, session, 'limit')
             if action and elapsed >= 200 and not sent:
                 typed = run(['tmux', '-L', socket, 'send-keys', '-l', action])
                 entered = run(['tmux', '-L', socket, 'send-keys', 'Enter'])
@@ -386,7 +392,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
                 sent = True
             if any(r.get('type') == 'assistant' and completion in content(r) for r in evidence['transcript']):
                 if mode != 'killed' or elapsed >= 300:
-                    evidence['returnedCapture'] = capture(socket)
+                    evidence['returnedState'] = session_state(directory, session, 'returned')
                     break
             time.sleep(2)
         else:

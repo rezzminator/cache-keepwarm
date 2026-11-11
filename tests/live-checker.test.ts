@@ -19,7 +19,7 @@ test.each([
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test('independent complete evidence is accepted', () => expect(checkPair(pair()).status).toBe(0));
-test.each(['wrong-time', 'missing-poke', 'extra-turn', 'effort-step', 'missing-capture', 'missing-debug', 'poke-text', 'wrong-id', 'cold-poke', 'control-poke', 'lapse'])('mechanism evidence rejects %s', problem => {
+test.each(['wrong-time', 'missing-poke', 'extra-turn', 'effort-step', 'missing-state', 'state-survived', 'missing-debug', 'poke-text', 'wrong-id', 'cold-poke', 'control-poke', 'lapse'])('mechanism evidence rejects %s', problem => {
   const input: any = pair(), warm = input.lanes[0];
   if (problem === 'wrong-time') warm.log.find((r: any) => r.event === 'admit').at += 10000;
   if (problem === 'missing-poke') warm.log = warm.log.filter((r: any) => !(r.event === 'poke' && r.pokes.count === 2));
@@ -30,7 +30,8 @@ test.each(['wrong-time', 'missing-poke', 'extra-turn', 'effort-step', 'missing-c
   if (problem === 'lapse') input.lanes[0] = mainLane(1);
   if (problem === 'extra-turn') warm.transcript.splice(1, 0, { type: 'assistant', message: { content: [{ text: 'extra request' }] } });
   if (problem === 'effort-step') warm.effort = [{ event: 'turn', ts: 1001010, turnId: 'w' }, { event: 'step', ts: 1100000, turnId: 'x' }];
-  if (problem === 'missing-capture') delete warm.returnedCapture;
+  if (problem === 'missing-state') delete warm.returnedState;
+  if (problem === 'state-survived') warm.returnedState = warm.waitingState;
   if (problem === 'missing-debug') delete warm.debug;
   expect(checkPair(input).status).toBe(2);
 });

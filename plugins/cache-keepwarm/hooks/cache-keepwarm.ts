@@ -11,15 +11,15 @@ import { metaRow, type LogRow } from '../src/log.ts';
 import { PluginLogQueue, levelRow, pluginLogDir, type PluginLogLevel } from '../src/plugin-log.ts';
 import { compactFacts, compactOutcome, compactReset } from '../src/compact.ts';
 import { pokeKey, pokesFor, pokeSent, type PokeCount } from '../src/pokes.ts';
-import { pokeMessage, formatWaiting, formatStopped, formatState, sessionState, stateDirectory, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
+import { pokeMessage, formatState, sessionState, stateDirectory, formatOutcome, type StatusView, type PokeLimit } from '../src/status.ts';
 type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: number; originalExpiry: number; context: number; model: string; spent: number; warms: number; epoch: number; lastPoke: number | null; failed?: string };
 /** The main chat's poke in flight: its text, the episode it serves and, once its turn started, that turn's id; `entered` once the submit
  * resolved, which Claude Code does when the poke's turn has started, so an unbound poke binds to the next main step. */
 type Poke = { text: string; episode: Episode; sessionId: string; turnId?: string; entered?: boolean };
 type WarmCharge = { a: SubState; epoch: number; at: number; text: string; wake: number; turnId?: string; episode: NonNullable<SubState['episode']>; sessionId: string; owner?: State };
-type State = { stateDir: string; stateWarning?: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; tick?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; plog: PluginLogQueue; stores: Promise<void>; instance: string; logError?: string; logOff?: boolean; inactive?: boolean; ended?: EndedItem; detail?: string };
+type State = { stateDir: string; stateWarning?: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; plog: PluginLogQueue; stores: Promise<void>; instance: string; logError?: string; logOff?: boolean; inactive?: boolean; ended?: EndedItem; detail?: string };
 async function readOptionEnv($: EngineInterface) {
-  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT'), CACHE_KEEPWARM_STATUS: await $.env.get('CACHE_KEEPWARM_STATUS') };
+  return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT') };
 }
 async function readTtlEnv($: EngineInterface): Promise<TtlEnv> { return { FORCE_PROMPT_CACHING_5M: await $.env.get('FORCE_PROMPT_CACHING_5M'), CLAUDE_CODE_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'), CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL'), ENABLE_PROMPT_CACHING_1H: await $.env.get('ENABLE_PROMPT_CACHING_1H') }; }
 function enabled(s: State) { return effectiveEnabled(s.options.enabled, s.override); }
@@ -28,22 +28,13 @@ const validUsage = (u: Usage | undefined): u is Usage => !!u && [u.input_tokens,
 function mainPokes(s: State): PokeLimit { return { count: pokesFor(s.pokes, pokeKey((s.episode?.items ?? []).map(i => i.id))).count, max: s.options.maxPokes }; }
 function view(s: State): StatusView {
   const e = s.episode;
-  return { enabled: enabled(s), source: s.override === null ? 'launch' : 'session', reason: s.reason, pokes: mainPokes(s), items: (e?.items ?? []).map(i => ({ ...i, firstSeenAt: s.seen.get(i.id) ?? s.now })), now: s.now, warms: e?.warms ?? 0, nextInMs: s.nextAt - s.now, ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: s.anchor?.context ?? null, ledger: e ? budgetLedger({ context: e.context, ttl: s.ttl.ttl, spent: e.spent, warms: e.warms }) : null, session: s.session, lastOutcome: s.lastOutcome, warnings: [...(s.options.bad.length ? ['bad options: ' + s.options.bad.join(', ')] : []), ...badTtl(s.ttlEnv), ...(s.stateWarning ? [s.stateWarning] : []), ...(s.logError ? [s.logError] : [])] };
+  return { enabled: enabled(s), source: s.override === null ? 'launch' : 'session', reason: s.reason, pokes: mainPokes(s), items: (e?.items ?? []).map(i => ({ ...i, firstSeenAt: s.seen.get(i.id) ?? s.now })), now: s.now, warms: e?.warms ?? 0, nextInMs: s.nextAt - s.now, ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: s.anchor?.context ?? null, ledger: e ? budgetLedger({ context: e.context, ttl: s.ttl.ttl, spent: e.spent, warms: e.warms }) : null, session: s.session, lastOutcome: s.lastOutcome, ...(s.reason === 'poke-failed' || s.reason === 'timer-failed' ? { detail: s.detail } : {}), warnings: [...(s.options.bad.length ? ['bad options: ' + s.options.bad.join(', ')] : []), ...badTtl(s.ttlEnv), ...(s.stateWarning ? [s.stateWarning] : []), ...(s.logError ? [s.logError] : [])] };
 }
+/** The status line carries only problems (bad options, a failed log write); the warming state reaches a status line through the
+ * session-state JSON and `/keepwarm status`. */
 function paint($: EngineInterface, s: State) {
-  const v = view(s), e = s.episode;
-  let text: string | undefined;
-  if (enabled(s) && !s.busy && s.options.status) {
-    if (s.reason === 'eligible' && e) text = formatWaiting({ ...v, pokes: mainPokes(s), reasonCode: s.reason });
-    else if (s.reason === 'small') text = formatStopped({ reason: 'small', context: s.anchor?.context, minContext: s.options.minContext, reasonCode: s.reason });
-    else if (s.reason === 'poke-limit') text = formatStopped({ reason: 'poke-limit', pokes: mainPokes(s), reasonCode: s.reason });
-    else if (s.reason === 'budget') text = formatStopped({ reason: 'budget', warms: e?.warms ?? 0, reasonCode: s.reason });
-    else if (s.reason === 'ended' && s.ended) text = formatStopped({ reason: 'ended', item: s.ended.item, detail: s.ended.ended, reasonCode: s.reason });
-    else if (s.reason === 'poke-failed' || s.reason === 'timer-failed') text = formatStopped({ reason: s.reason === 'poke-failed' ? 'error' : 'timer', detail: s.detail, reasonCode: s.reason });
-    else if (s.reason !== 'idle' && s.reason !== 'nothing-pending' && s.reason !== 'resumed') text = formatStopped({ reason: 'decision', detail: s.reason, reasonCode: s.reason });
-  }
-  if (v.warnings?.length) text = [text, ...v.warnings].filter(Boolean).join(' · ');
-  $.ui.status(text); publishState($, s);
+  const warnings = view(s).warnings ?? [];
+  $.ui.status(warnings.length ? warnings.join(' · ') : undefined); publishState($, s);
 }
 /** Serialize immutable main-session snapshots; filesystem failures belong in the plugin debug log, never the chat. */
 function publishState($: EngineInterface, s: State, remove = false) {
@@ -59,7 +50,7 @@ function publishState($: EngineInterface, s: State, remove = false) {
     if (result.exitCode !== 0) throw new Error(`exit ${result.exitCode}: ${result.stderr} ${result.stdout}`);
   }).catch(error => { s.stateLast = ''; $.ui.log(`cache-keepwarm state ${path}: ${String(error)}`, { to: 'debug' }); });
 }
-function stopTimers(s: State) { s.timer?.cancel(); s.tick?.cancel(); s.timer = undefined; s.tick = undefined; }
+function stopTimers(s: State) { s.timer?.cancel(); s.timer = undefined; }
 /** Ends the episode. Its poke counter goes with it; a poke whose turn never started is no longer this plugin's to charge. */
 function cancel($: EngineInterface, s: State, reason: ReasonCode, closing = false) {
   ++s.epoch; stopTimers(s); s.nextAt = 0;
@@ -73,7 +64,7 @@ async function persist($: EngineInterface, s: State) {
   s.stores = s.stores.then(() => $.store.set(key, data)).catch(error => plog($, s, 'error', 'store-write-failed', `store write failed (${String(error)})`, 'hooks/cache-keepwarm.ts#persist'));
   await s.stores;
 }
-/** A decision row: an error row for a failed poke, timer or inventory, else info; it never reaches the screen, the status shows a stop. */
+/** A decision row: an error row for a failed poke, timer or inventory, else info; it never reaches the screen; the session state shows a stop. */
 async function log($: EngineInterface, s: State, event: string, reason = s.reason, usage?: Usage, episode = s.episode, row?: LogRow, extra?: Partial<LogRow>) {
   const r = metaRow({ ...(row ?? { at: s.now, ...(s.anchor ? { anchorAt: s.anchor.at } : {}), event, epoch: episode?.epoch ?? s.epoch, items: episode?.items ?? [], ttl: s.ttl.ttl, ttlSource: s.ttl.source, context: episode?.context ?? s.anchor?.context ?? null, spent: episode?.spent ?? 0, reason, ...(usage ? { usage } : {}), ...(episode ? { ledger: budgetLedger({ context: episode.context, ttl: s.ttl.ttl, spent: episode.spent, warms: episode.warms }), warms: episode.warms, pokes: { count: pokesFor(s.pokes, pokeKey(episode.items.map(i => i.id))).count, max: s.options.maxPokes } } : {}), session: s.session }), ...extra });
   const failed = r.event === 'agent-list-failed' || r.reason === 'poke-failed' || r.reason === 'timer-failed' || r.reason === 'inventory-unknown';
@@ -114,13 +105,8 @@ async function arm($: EngineInterface, s: State, epoch: number) {
   s.nextAt = nextFireAt({ lastSendAt: s.anchor.at, ttl: s.ttl.ttl });
   try {
     s.timer = $.clock.after(Math.max(0, s.nextAt - s.now), () => { void fire($, s, epoch); });
-    if (!s.tick) s.tick = $.clock.every(60000, () => { void refresh($, s, epoch); });
     paint($, s); await s.stateWrites;
   } catch (error) { s.reason = decision(s, epoch, 'timer-failed').reason; s.detail = String(error); stopTimers(s); paint($, s); await log($, s, 'stop'); }
-}
-async function refresh($: EngineInterface, s: State, epoch: number) {
-  try { const now = await $.clock.now(); if (s.epoch !== epoch) return; s.now = now; paint($, s); }
-  catch (error) { if (s.epoch === epoch) { s.reason = decision(s, epoch, 'timer-failed').reason; s.detail = String(error); stopTimers(s); paint($, s); await log($, s, 'stop'); } }
 }
 /** A poke that never entered: no poke was sent, so its count is given back, and the episode stops on the failure without retrying. */
 async function failPoke($: EngineInterface, s: State, e: Episode, text: string, before: PokeCount | null, detail: string) {

@@ -287,17 +287,17 @@ def check(evidence):
     for lane in lanes:
         if compaction_verdict(lane['log']):
             raise ValueError('FAIL unexpected ' + compaction_verdict(lane['log']))
-    if not isinstance(warm.get('waitingCapture'), str) or 'cache-keepwarm · waiting on' not in warm['waitingCapture']:
-        raise ValueError('FAIL waiting status capture absent')
-    if not isinstance(warm.get('returnedCapture'), str) or not warm['returnedCapture'].strip():
-        raise ValueError('NOT RUN: returned capture missing')
-    if 'cache-keepwarm · waiting on' in warm['returnedCapture']:
-        raise ValueError('FAIL waiting status survived return')
+    if not isinstance(warm.get('waitingState'), dict) or warm['waitingState'].get('state') != 'warming':
+        raise ValueError('FAIL waiting session state not warming: ' + json.dumps(warm.get('waitingState')))
+    if not isinstance(warm.get('returnedState'), dict):
+        raise ValueError('NOT RUN: returned session state missing')
+    if warm['returnedState'].get('state') == 'warming':
+        raise ValueError('FAIL warming session state survived return')
     return {'verdict': 'PASS cache separation', 'ratios': ratios, 'pokes': pokes, 'lanes': lanes}
 
 def check_cap(lane):
     """One warm lane capped at 2 pokes over a wait long enough for 3 or more: exactly 2 pokes, a recorded poke-limit stop
-    shown in the status, and no poke after it while the wait went on past when a third was due."""
+    shown in the session state, and no poke after it while the wait went on past when a third was due."""
     lane_ready(lane)
     window, ratio = reply_window(lane)
     if not isinstance(lane.get('effort'), list):
@@ -314,8 +314,9 @@ def check_cap(lane):
     effort_quiet(lane['effort'], window, poke_windows(pokes))
     if compaction_verdict(lane['log']):
         raise ValueError('FAIL unexpected ' + compaction_verdict(lane['log']))
-    if not isinstance(lane.get('limitCapture'), str) or 'poke limit reached 2/2' not in lane['limitCapture']:
-        raise ValueError('FAIL poke limit status capture absent')
+    limit = lane.get('limitState')
+    if not isinstance(limit, dict) or (limit.get('state'), limit.get('reason'), limit.get('pokes')) != ('stopped', 'poke-limit', {'count': 2, 'max': 2}):
+        raise ValueError('FAIL poke limit session state absent: ' + json.dumps(limit))
     return {'verdict': 'PASS cap: 2 pokes, then none', 'pokes': pokes, 'limitAt': timestamp(limits[0]), 'returnRatio': ratio, 'waitMs': window[1] - window[0]}
 
 def effort_quiet(rows, window, allowed=()):

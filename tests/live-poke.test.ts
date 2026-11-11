@@ -4,15 +4,15 @@ import { requests, usage, poke, message, mainLane, checkPair, pair, launchText }
 function capLane() {
   const lane: any = mainLane(2, { max: 2, back: 900000, read: 20000 });
   lane.log.push({ event: 'decision', at: 1000000 + 486000, epoch: 2, reason: 'poke-limit', pokes: { count: 2, max: 2 } });
-  lane.limitCapture = 'cache-keepwarm · stopped: poke limit reached 2/2 [poke-limit]';
+  lane.limitState = { state: 'stopped', reason: 'poke-limit', pokes: { count: 2, max: 2 } };
   return lane;
 }
-test.each([['good', 0, 'PASS cap: 2 pokes, then none'], ['third', 2, 'FAIL cap: pokes'], ['no-limit', 2, 'FAIL cap: no poke-limit decision'], ['short', 2, 'NOT RUN: the wait ended before a third poke was due'], ['no-capture', 2, 'FAIL poke limit status capture absent'], ['launch-prompt', 0, 'PASS cap: 2 pokes, then none']] as const)('cap evidence %s is judged', (problem, status, text) => {
+test.each([['good', 0, 'PASS cap: 2 pokes, then none'], ['third', 2, 'FAIL cap: pokes'], ['no-limit', 2, 'FAIL cap: no poke-limit decision'], ['short', 2, 'NOT RUN: the wait ended before a third poke was due'], ['no-limit-state', 2, 'FAIL poke limit session state absent'], ['launch-prompt', 0, 'PASS cap: 2 pokes, then none']] as const)('cap evidence %s is judged', (problem, status, text) => {
   let lane: any = capLane();
-  if (problem === 'third') { const three: any = mainLane(3, { max: 2, back: 900000, read: 20000 }); lane = { ...three, log: [...three.log, lane.log.at(-1)], limitCapture: lane.limitCapture }; }
+  if (problem === 'third') { const three: any = mainLane(3, { max: 2, back: 900000, read: 20000 }); lane = { ...three, log: [...three.log, lane.log.at(-1)], limitState: lane.limitState }; }
   if (problem === 'no-limit') lane.log = lane.log.filter((r: any) => r.reason !== 'poke-limit');
-  if (problem === 'short') { const short: any = mainLane(2, { max: 2, back: 700000, read: 20000 }); lane = { ...short, log: [...short.log, lane.log.at(-1)], limitCapture: lane.limitCapture }; }
-  if (problem === 'no-capture') delete lane.limitCapture;
+  if (problem === 'short') { const short: any = mainLane(2, { max: 2, back: 700000, read: 20000 }); lane = { ...short, log: [...short.log, lane.log.at(-1)], limitState: lane.limitState }; }
+  if (problem === 'no-limit-state') delete lane.limitState;
   if (problem === 'launch-prompt') lane.transcript.unshift(message(launchText, 500, 'user'));
   const result = checkPair({ mode: 'cap', lanes: [lane] });
   expect(result.status, result.stdout).toBe(status); expect(result.stdout).toContain(text);
