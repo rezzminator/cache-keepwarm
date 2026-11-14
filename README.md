@@ -5,7 +5,7 @@
 **Keeps Claude Code prompt caches warm during background waits with visible pokes, for the main chat and waiting sub-agents, capped per wait and each under its own rewrite-saving budget.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.6.2-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>
@@ -20,7 +20,7 @@
 - [Commands](#commands)
 - [Session state JSON](#session-state-json)
 - [When it pokes](#when-it-pokes)
-- [Status texts](#status-texts)
+- [Status line](#status-line)
 - [Configuration](#configuration)
 - [TTL resolution](#ttl-resolution)
 - [Budget and ledger](#budget-and-ledger)
@@ -119,7 +119,7 @@ A write or deletion failure logs the full destination path and error through the
 
 ## When it pokes
 
-Every timer fire is a decision made by one pure function; each outcome (poke, skip, stop) carries a short reason code that is shown with the status and written to the log. It does not poke:
+Every timer fire is a decision made by one pure function; each outcome (poke, skip, stop) carries a short reason code that `/keepwarm status` shows and the log records. It does not poke:
 
 - while a main turn runs, or while you type: a draft edit invalidates the episode at once, and warming resumes only after the next qualifying main Stop;
 - when the cache is cold, or within 15 seconds of expiry, a window too close for a request to land;
@@ -131,20 +131,20 @@ Every timer fire is a decision made by one pure function; each outcome (poke, sk
 
 The anchor for the timer is the last main request that read or wrote the cache; a response with no cache use invalidates earlier warmth instead of renewing it. The timer fires at 80% of the lifetime after that anchor; a candidate at or after the anchor plus the lifetime minus 15 seconds is refused as `expiry-safety`, and a fully expired cache as `cache-cold`.
 
-## Status texts
+## Status line
 
-The status line is one line, retexted once a minute while an episode is armed; a stop notice persists until the next main turn.
+The plugin paints the line under the prompt only for a problem: a bad option or TTL variable, a relative state directory, or a failed log write, such as `bad options: CACHE_KEEPWARM_MAX_POKES`; a wait paints nothing. A status line shows warming from the session state JSON (§ Session state JSON). `/keepwarm status` gives the whole state in words, its reason code in brackets:
 
-- Waiting: `cache-keepwarm · waiting on agent "Audit the release notes" +1 more · 9m · pokes 2/4 · next in 3m`; an assumed lifetime appends `· TTL assumed 5m`; an elapsed time of 65 minutes reads `1h05m`.
-- Not warming: `cache-keepwarm · not warming: context 19,999 tokens is under the 20,000 minimum`, `not warming: no main request seen since the plugin loaded`, `not warming: 1h refresh unproven`.
-- Stopped: `cache-keepwarm · stopped:` followed by one reason: `poke limit reached 4/4` · `the next warm would cost more than the rewrite it saves (3 warms)` · `the cache had already lapsed (timer fired 4m late)` · `agent "X" was killed` · `poke failed (dropped: {reason})` · `timer failed ({message})` · `this Claude Code gives the Stop hook no background_tasks`.
+- Warming: `warming [eligible]`, with the first waiting item, `+1 more`, and the elapsed time (`9m`, `1h05m`).
+- Not warming: `not warming: context too small`, `not warming: no main request seen since the plugin loaded`, `not warming: 1h refresh unproven`.
+- Stopped: `stopped: poke limit reached 4/4` · `stopped: next warm exceeds budget` · `stopped: work ended` · `stopped: poke failed ({cause})` · `stopped: timer failed ({message})` · `stopped: this Claude Code gives the Stop hook no background_tasks`.
 - Log: `cache-keepwarm: plugin log {directory} failed: {message}; {n} rows are kept for the next write` or `cache-keepwarm: plugin log off: no PLUGIN_LOG_DIR and no HOME`, shown once per failing streak and re-armed by the next successful write; warming continues. Only an error reaches the screen.
 
 Labels (an agent's description, a command line) are sanitized to 40 characters plus an ellipsis for display and the poke text. They never enter the metadata log. Sub-agent log rows carry `kind: "subagent"` and `agentId`, not message text.
 
 ## Configuration
 
-Six options, set in the plugin's `/config` page or by variable:
+Five options, set in the plugin's `/config` page or by variable:
 
 | Variable | Option | Default | Meaning |
 | --- | --- | --- | --- |
@@ -153,7 +153,6 @@ Six options, set in the plugin's `/config` page or by variable:
 | `CACHE_KEEPWARM_MAX_POKES` | `maxPokes` | `4` | Pokes per thread (the main chat, or one sub-agent) while its sorted set of pending ids is unchanged and nothing else happens; an integer of at least 1 |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents in independent episodes; each poke also wakes the spawning parent for one real turn, which the forecast counts. Off leaves the main-chat path unchanged |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
-| `CACHE_KEEPWARM_STATUS` | `status` | `true` | Show the waiting and stopped status text under the prompt; off paints only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the JSON are unaffected |
 
 Precedence is variable, then option, then default. A blank variable is absent; booleans read `1`, `0`, `true` or `false` in any case; `maxPokes` reads a whole number of at least 1. A bad variable or option is named in the status and the default applies, never the configured option. The log never contains a label, command or description.
 
@@ -237,7 +236,7 @@ The unit gates (decisions, and the function-hook tests on a stand-in and on the 
 
 `CLAUDE.md` is the testing manual.
 
-The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. A capture checks that the waiting status cleared. Each lane starts its own `claude` detached in its own tmux server (socket `kw-{lane}-{id}`), with the lane's environment and Claude Code's `CLAUDE_CODE_PROMPT_CACHE_TTL` set to the lane's TTL, and ends it by killing that server and every process carrying the lane's marker; a run stopped by SIGKILL leaves it running, listed by `ls ${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/ | grep kw-` and ended with `tmux -L {socket} kill-server`.
+The live harness needs `node`, `npm`, `claude`, `python3`, `tmux`, the user's existing Claude configuration, a working directory with its own trust entry in Claude Code passed as `--cwd`, and the directory of the second plugin used for the comparison. The evidence directory is the `--output` argument or a temporary directory outside the repository. The session state read after the return checks that warming ended. Each lane starts its own `claude` detached in its own tmux server (socket `kw-{lane}-{id}`), with the lane's environment and Claude Code's `CLAUDE_CODE_PROMPT_CACHE_TTL` set to the lane's TTL, and ends it by killing that server and every process carrying the lane's marker, then moves the dead chat's transcript and session folder out of the seat's projects store into the evidence directory's `sessions-retired/`, so no lane stays resumable; a run stopped by SIGKILL leaves it running, listed by `ls ${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/ | grep kw-` and ended with `tmux -L {socket} kill-server`.
 
 ## Credits
 

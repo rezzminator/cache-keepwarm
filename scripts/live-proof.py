@@ -158,6 +158,14 @@ def debug_text(directory):
         return '', False
     return checker.read_text(path), True
 
+def session_state(directory, session, moment):
+    """The chat's public v1 session-state record at one moment of the wait, the status a status line renders, saved as
+    {moment}-state.json; None when the plugin has written none."""
+    path = directory / 'sessions' / (session + '.json')
+    record = json.loads(checker.read_text(path)) if path.is_file() else None
+    (directory / (moment + '-state.json')).write_text(json.dumps(record, indent=2))
+    return record
+
 def capture(socket):
     result = run(['tmux', '-L', socket, 'capture-pane', '-p'])
     if result.returncode:
@@ -234,6 +242,27 @@ def kill_chat(name, marker, socket):
         except (OSError, subprocess.TimeoutExpired) as error:
             errors.append('socket verification: ' + str(error))
     return {'nativeSocketClosed': dead, 'ownedProcessesRemaining': left, 'killOutput': kill_output, 'errors': errors}
+
+def retire_sessions(project, before, directory):
+    """Moves the lane's sessions (each transcript and its {session}/ folder) out of the seat's projects store into the
+    evidence directory, once their chats are dead: left there, every lane would stay resumable in the seat's session
+    list. A lane's --cwd is its own, so the transcripts new since launch are the lane's."""
+    moved, errors = [], []
+    target = directory / 'sessions-retired'
+    try:
+        owned = sorted(set(project.glob('*.jsonl')) - before, key=str)
+    except OSError as error:
+        return moved, ['session enumeration: ' + str(error)]
+    for transcript in owned:
+        for path in (transcript, transcript.parent / transcript.stem):
+            if not path.exists():
+                continue
+            try:
+                target.mkdir(mode=0o700, exist_ok=True)
+                moved.append(shutil.move(str(path), str(target / path.name)))
+            except OSError as error:
+                errors.append(f'session retire {path}: {error}')
+    return moved, errors
 
 
 def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m', subagent=False, subagents=True, extra_env=None, release=False):
@@ -351,12 +380,10 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
             if void:
                 raise RuntimeError('VOID ' + void)
             elapsed = time.monotonic() - started
-            if elapsed >= 60 and 'waitingCapture' not in evidence:
-                evidence['waitingCapture'] = capture(socket)
-                (directory / 'waiting.capture').write_text(evidence['waitingCapture'])
-            if mode == 'cap' and elapsed >= 600 and 'limitCapture' not in evidence:
-                evidence['limitCapture'] = capture(socket)
-                (directory / 'limit.capture').write_text(evidence['limitCapture'])
+            if elapsed >= 60 and 'waitingState' not in evidence:
+                evidence['waitingState'] = session_state(directory, session, 'waiting')
+            if mode == 'cap' and elapsed >= 600 and 'limitState' not in evidence:
+                evidence['limitState'] = session_state(directory, session, 'limit')
             if action and elapsed >= 200 and not sent:
                 typed = run(['tmux', '-L', socket, 'send-keys', '-l', action])
                 entered = run(['tmux', '-L', socket, 'send-keys', 'Enter'])
@@ -365,7 +392,7 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
                 sent = True
             if any(r.get('type') == 'assistant' and completion in content(r) for r in evidence['transcript']):
                 if mode != 'killed' or elapsed >= 300:
-                    evidence['returnedCapture'] = capture(socket)
+                    evidence['returnedState'] = session_state(directory, session, 'returned')
                     break
             time.sleep(2)
         else:
@@ -393,6 +420,13 @@ def lane(args, output, mode, seconds=755, enabled=True, action=None, cache='5m',
         evidence['failure'] = failure
     finally:
         evidence['cleanup'] = cleanup(name, marker, socket)
+        # Only a dead chat's session moves: a live one would write on into the moved file's old path.
+        if evidence['cleanup']['ownedProcessesRemaining'] == [] and evidence['cleanup']['nativeSocketClosed']:
+            evidence['cleanup']['sessionsRetired'], retire_errors = retire_sessions(project, before, directory)
+            evidence['cleanup']['errors'] += retire_errors
+            # The state lane's evidence names the store path; it now lives in the evidence directory.
+            if evidence.get('transcriptPath', '').startswith(str(project) + os.sep):
+                evidence['transcriptPath'] = str(directory / 'sessions-retired' / Path(evidence['transcriptPath']).name)
         (directory / 'evidence.json').write_text(json.dumps(evidence, indent=2))
         if not evidence['cleanup']['nativeSocketClosed'] or evidence['cleanup']['ownedProcessesRemaining'] != [] or evidence['cleanup']['errors']:
             raise RuntimeError((failure + '; ' if failure else '') + 'CLEANUP FAILED ' + name + ': ' + str(evidence['cleanup']))

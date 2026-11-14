@@ -13,7 +13,7 @@ Keep-warm poke 1/4: your prompt cache was about to expire, so this message keeps
 If any of these is stale or was started by accident, stop it now. Otherwise reply `waiting` and end your turn.
 ```
 
-At most `maxPokes` pokes go to one thread while its pending items stay the same and nothing else happens; a user prompt, a real turn, an item finishing or a new one appearing starts a fresh count. A reached cap reads `poke limit reached 4/4` in the status, `/keepwarm` and the log.
+At most `maxPokes` pokes go to one thread while its pending items stay the same and nothing else happens; a user prompt, a real turn, an item finishing or a new one appearing starts a fresh count. A reached cap reads `poke limit reached 4/4` in `/keepwarm` and the log, and `stopped` in the session state JSON.
 
 ```text
 /keepwarm            state: on or off and why, the current wait, pokes and spend against the allowance
@@ -28,7 +28,6 @@ At most `maxPokes` pokes go to one thread while its pending items stay the same 
 | `CACHE_KEEPWARM_MAX_POKES` | `maxPokes` | `4` | Pokes per thread on one unchanged wait; an integer of at least 1 |
 | `CACHE_KEEPWARM_SUBAGENTS` | `subagents` | `true` | Poke waiting sub-agents, each poke also waking the parent for one turn; the main path is unchanged either way |
 | `CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT` | `subagentMinContext` | `100000` | Smallest sub-agent context in tokens worth a poke and its parent wake |
-| `CACHE_KEEPWARM_STATUS` | `status` | `true` | Show the waiting and stopped status text under the prompt; off paints only problems (bad options, a failed log write), for a status line that renders the session-state JSON instead. `/keepwarm status` and the JSON are unaffected |
 
 A variable beats the option, the option beats the default; a blank variable is absent, booleans read `1`, `0`, `true` or `false` in any case, and a bad variable is named in the status while the default applies.
 

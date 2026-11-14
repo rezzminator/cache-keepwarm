@@ -2,6 +2,18 @@
 
 Every release of cache-keepwarm. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `cache-keepwarm--v<version>`, with a GitHub release carrying the section below.
 
+## [Unreleased]
+
+## [0.7.0] — 2026-11-14
+
+### Removed
+
+- The `status` option, its `CACHE_KEEPWARM_STATUS` variable and its `userConfig` key, with the waiting and stopped text under the prompt they switched: the plugin now paints that line only for a problem (a bad option or TTL variable, a relative state directory, a failed log write). A status line shows warming from the session state JSON; `/keepwarm status` gives the whole state, now with a failed poke's or timer's cause. To migrate, drop `CACHE_KEEPWARM_STATUS` and the `status` option; nothing replaces them.
+
+### Fixed
+
+- A live lane no longer leaves its chat in the seat's resumable sessions: once the chat is dead, its transcript and session folder move from the seat's projects store into the lane's evidence directory (`sessions-retired/`), and a failed move fails the run's cleanup.
+
 ## [0.6.2] — 2026-11-02
 
 ### Changed

@@ -30,7 +30,7 @@ export function mainLane(count: number, { max = 4, back = 756000, read = 49000 }
     anchor = admit + 500;
   }
   transcript.push(message('<task-notification><task-id>task1</task-id>LONG_PROBE_DONE</task-notification>', back - 1000, 'user'), message('RETURNED', back, 'assistant', read), ...requests());
-  return { transcriptPath: 'transcript.jsonl', debug: '', effort: [] as any[], waitingCapture: 'cache-keepwarm · waiting on agent', returnedCapture: 'finished', transcript, log };
+  return { transcriptPath: 'transcript.jsonl', debug: '', effort: [] as any[], waitingState: { state: 'warming', reason: 'eligible' }, returnedState: { state: 'on', reason: 'idle' }, transcript, log };
 }
 export function pair() {
   const control: any = mainLane(0, { read: 20000 });

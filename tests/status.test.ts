@@ -1,26 +1,8 @@
 import { expect, test } from 'vitest';
-import { pokeMessage, formatLedger, formatOutcome, formatState, formatStopped, formatWaiting, type StatusView } from '../plugins/cache-keepwarm/src/status.ts';
+import { pokeMessage, formatLedger, formatOutcome, formatState, type StatusView } from '../plugins/cache-keepwarm/src/status.ts';
 function call<T>(fn: () => T): T | string { try { return fn(); } catch (error) { return String(error); } }
 const items = [{ kind: 'agent', label: 'Audit the release notes', firstSeenAt: 0 }, { kind: 'command', label: 'npm test', firstSeenAt: 60000 }];
-test('exact waiting examples', () => {
-  const input = { items, now: 540000, pokes: { count: 2, max: 4 }, nextInMs: 180000, ttlSource: 'observed' as const };
-  const expected = 'cache-keepwarm · waiting on agent "Audit the release notes" +1 more · 9m · pokes 2/4 · next in 3m';
-  expect(call(() => formatWaiting(input))).toBe(expected);
-  expect(call(() => formatWaiting({ ...input, ttlSource: 'assumed' }))).toBe(expected + ' · TTL assumed 5m');
-  expect(call(() => formatWaiting({ ...input, now: 3900000 }))).toContain('1h05m');
-});
-test.each([
-  [{ reason: 'poke-limit', pokes: { count: 4, max: 4 } }, 'stopped: poke limit reached 4/4'],
-  [{ reason: 'budget', warms: 10 }, 'stopped: the next warm would cost more than the rewrite it saves (10 warms)'],
-  [{ reason: 'late', lateMinutes: 4 }, 'stopped: the cache had already lapsed (timer fired 4m late)'],
-  [{ reason: 'ended', item: { kind: 'agent', label: 'X' }, detail: 'killed' }, 'stopped: agent "X" was killed'],
-  [{ reason: 'error', detail: 'dropped: busy' }, 'stopped: poke failed (dropped: busy)'],
-  [{ reason: 'inactive' }, 'stopped: this Claude Code gives the Stop hook no background_tasks'],
-  [{ reason: 'small', context: 19999, minContext: 20000 }, 'not warming: context 19,999 tokens is under the 20,000 minimum'],
-  [{ reason: '1h-unproven' }, 'not warming: 1h refresh unproven'],
-] as const)('notice %#', (input, text) => expect(call(() => formatStopped(input))).toBe('cache-keepwarm · ' + text));
 test('clear, command and ledger share truthful values', () => {
-  expect(call(() => formatStopped(undefined))).toBeUndefined();
   const session = { spent: 700, warms: 3, episodes: 1, estimatedNet: 5000, unknown: 0 };
   const ledger = { context: 50000, ttl: '5m' as const, spent: 700, warms: 3, allowance: 57500, protecting: 62500, remaining: 56800 };
   expect(call(() => formatLedger(ledger, session))).toContain('spent ≈ 0.7k-eq');
@@ -30,6 +12,8 @@ test('clear, command and ledger share truthful values', () => {
     expect(call(() => formatState(view))).toContain(`[${reason}]`);
     expect(call(() => formatState(view))).toContain('session override');
   }
+  const failed: StatusView = { enabled: true, source: 'launch', reason: 'poke-failed', items: [], now: 0, warms: 1, nextInMs: 0, ttl: '5m', ttlSource: 'env', context: 50000, ledger: null, session, lastOutcome: null, detail: 'dropped: busy' };
+  expect(formatState(failed).split(' · ')[2]).toBe('stopped: poke failed (dropped: busy) [poke-failed]');
   expect(call(() => formatOutcome({ elapsedMs: 600000, readPercent: 98, netSaved: 5000, reason: 'estimated' }))).toContain('return read 98.0% from cache · estimated net saved ≈ 5k-eq');
   expect(call(() => formatOutcome({ elapsedMs: 0, readPercent: null, netSaved: null, reason: 'unknown' }))).toContain('unknown');
 });
