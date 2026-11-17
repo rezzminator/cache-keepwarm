@@ -34,9 +34,10 @@ test('every off toggle replacement is internally consistent', async () => {
   expect(off.every(record => record.enabled === false && record.state === 'off' && record.source === 'session')).toBe(true);
 });
 test('main session publishes atomic v1 replacements, toggles, and deletes on end', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'keepwarm-state-'));
+  const dir = await mkdtemp(join(tmpdir(), 'keepwarm-state-')), logs = await mkdtemp(join(tmpdir(), 'keepwarm-logs-'));
   try {
-    const h = new Harness({}, { CACHE_KEEPWARM_STATE_DIR: dir });
+    // The runner below is real for every command, the log writer included, so the log goes to this test's own directory.
+    const h = new Harness({}, { CACHE_KEEPWARM_STATE_DIR: dir, PLUGIN_LOG_DIR: logs });
     (h.engine as any).plugin = { root: resolve('plugins/cache-keepwarm') };
     (h.engine as any).process = { run: async (argv: string[]) => {
       try { const result = await run(argv[0]!, argv.slice(1), {}); return { exitCode: 0, ...result }; }
@@ -58,7 +59,8 @@ test('main session publishes atomic v1 replacements, toggles, and deletes on end
     await writeFile(join(dir, '.other-session.killed-writer.tmp'), '{');
     await h.emit('session.end', { reason: 'exit' });
     expect(await readdir(dir)).toEqual(['.other-session.killed-writer.tmp']);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    expect(await readdir(logs)).toEqual(['cache-keepwarm']);
+  } finally { await rm(dir, { recursive: true, force: true }); await rm(logs, { recursive: true, force: true }); }
 });
 
 test.each([
