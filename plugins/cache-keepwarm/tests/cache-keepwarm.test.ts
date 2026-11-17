@@ -6,7 +6,6 @@ test('native timer poke and immediate command use the registered plugin', async 
   on('command.register', () => ({ value: { command: 'keepwarm' } }));
   on('ui.status', () => ({ value: undefined }));
   on('ui.toast', () => ({ value: undefined }));
-  on('prompt.read', () => ({ value: { text: '', cursor: 0 } }));
   on('session.start', (_$, e) => ({ cwd: e.cwd }));
   on('classic.Stop', () => ({}));
   on('agent.list', () => ({ value: [] }));

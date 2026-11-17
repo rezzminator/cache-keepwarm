@@ -12,7 +12,7 @@ const groups = {
   warming: ['eligible', 'in-flight'],
   stopped: ['poke-limit', 'budget', 'poke-failed', 'timer-failed', 'stale', 'ended'],
   off: ['off'],
-  on: ['agent-not-waiting', 'busy', 'typing', 'inventory-unknown', 'nothing-pending', 'usage-unknown', 'usage-invalid', 'small', '1h-unproven', 'cache-cold', 'expiry-safety', 'wake-unknown', 'cannot-wake', 'imminent', 'marginal', 'resumed', 'idle'],
+  on: ['agent-not-waiting', 'busy', 'inventory-unknown', 'nothing-pending', 'usage-unknown', 'usage-invalid', 'small', '1h-unproven', 'cache-cold', 'expiry-safety', 'wake-unknown', 'cannot-wake', 'imminent', 'marginal', 'resumed', 'idle'],
 } as const;
 for (const [state, reasons] of Object.entries(groups)) test.each(reasons)('v1 maps %s to ' + state, reason => {
   const view: status.StatusView = { enabled: reason !== 'off', source: 'session', reason: reason as ReasonCode, pokes: { count: 2, max: 4 }, items: [{ kind: 'agent', label: 'Private label', firstSeenAt: 10 }], now: 100, warms: 2, nextInMs: 25, ttl: '5m', ttlSource: 'env', context: 50000, ledger: { context: 50000, ttl: '5m', spent: 200, warms: 2, allowance: 57500, protecting: 62500, remaining: 57300 }, session: { spent: 200, warms: 2, episodes: 0, estimatedNet: 0, unknown: 0 }, lastOutcome: null };
@@ -22,8 +22,8 @@ test('a main status change after a quiet idle publishes the current clock', asyn
   const h = new Harness({}, { HOME: '/state/user' }), records: any[] = [];
   (h.engine as any).process.run = async (argv: string[]) => { records.push(JSON.parse(argv[5]!)); return { exitCode: 0, stdout: '', stderr: '' }; };
   await h.start(); h.now += 600000;
-  await h.emit('prompt.change', { text: 'draft' }); await h.settle();
-  expect(records.at(-1)).toMatchObject({ updatedAt: h.now, state: 'on', reason: 'typing' });
+  await h.emit('prompt.submit', { text: 'go on' }); await h.settle();
+  expect(records.at(-1)).toMatchObject({ updatedAt: h.now, state: 'on', reason: 'busy' });
 });
 test('every off toggle replacement is internally consistent', async () => {
   const h = new Harness({}, { HOME: '/state/user' }), records: any[] = [];

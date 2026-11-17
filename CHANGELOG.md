@@ -4,6 +4,11 @@ Every release of cache-keepwarm. Versions follow [semantic versioning](https://s
 
 ## [Unreleased]
 
+### Changed
+
+- Typing in the prompt box no longer touches a wait: a draft neither ends, pauses nor delays warming, and the poke goes out on time as its own prompt. Before, one keystroke while the main chat waited on a sub-agent ended warming until the chat's next Stop, which a long sub-agent run never gives. The `typing` reason code is gone from the session state JSON, `/keepwarm` and the log.
+- `/keepwarm on` arms the wait already standing at once and keeps every sub-agent's wait; before, it discarded them and warming waited for the next Stop.
+
 ## [0.7.0] — 2026-11-14
 
 ### Removed

@@ -1,10 +1,10 @@
 import { expect, test } from 'vitest';
 import { decideWarm, type DecisionInput } from '../plugins/cache-keepwarm/src/decision.ts';
 const item = { id: 'a', expectedBackAt: null, wake: 'yes' as const };
-const base: DecisionInput = { enabled: true, busy: false, typing: false, currentEpoch: true, inFlight: false, known: true, context: 50000, minContext: 20000, lastSendAt: 0, now: 240000, ttl: '5m', warm1h: false, items: [item], pokes: { count: 0, max: 4 }, spent: 0, forecast: 8000, saved: 57500 };
+const base: DecisionInput = { enabled: true, busy: false, currentEpoch: true, inFlight: false, known: true, context: 50000, minContext: 20000, lastSendAt: 0, now: 240000, ttl: '5m', warm1h: false, items: [item], pokes: { count: 0, max: 4 }, spent: 0, forecast: 8000, saved: 57500 };
 test.each([
   [{}, 'warm', 'eligible'], [{ enabled: false }, 'stop', 'off'], [{ busy: true }, 'stop', 'busy'],
-  [{ typing: true }, 'stop', 'typing'], [{ currentEpoch: false }, 'stop', 'stale'], [{ inFlight: true }, 'skip', 'in-flight'],
+  [{ currentEpoch: false }, 'stop', 'stale'], [{ inFlight: true }, 'skip', 'in-flight'],
   [{ known: false }, 'stop', 'inventory-unknown'], [{ items: [] }, 'stop', 'nothing-pending'], [{ items: [], endedId: 'a' }, 'stop', 'ended'],
   [{ context: null }, 'stop', 'usage-unknown'], [{ context: NaN }, 'stop', 'usage-invalid'], [{ context: 19999 }, 'stop', 'small'],
   [{ lastSendAt: null }, 'stop', 'usage-unknown'], [{ ttl: '1h' }, 'stop', '1h-unproven'],

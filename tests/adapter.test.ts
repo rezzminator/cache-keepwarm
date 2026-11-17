@@ -54,7 +54,7 @@ test('the poke turn is recognised by its start alone when the calling hook skips
   const h = new Harness(); await h.arm(); await h.advance(240000); await h.pokeReply({ hook: false });
   expect(h.pending).toHaveLength(1); expect((await h.command('status')).text).toContain('session 1 warms');
 });
-test.each(['prompt.submit', 'prompt.edit', 'prompt.change', 'session.receive', 'session.compact', 'classic.PostModelSwitch', 'session.end'])('cancel on %s wins', async event => {
+test.each(['prompt.submit', 'session.receive', 'session.compact', 'classic.PostModelSwitch', 'session.end'])('cancel on %s wins', async event => {
   const h = new Harness(); await h.arm(); expect(h.pending).toHaveLength(1); await h.emit(event, { text: 'draft', origin: { kind: 'composer' } });
   expect(h.pending).toHaveLength(0); expect(h.status).toBeUndefined(); await h.advance(400000); expect(h.submits).toHaveLength(0);
 });
@@ -72,24 +72,31 @@ test.each(['drop', 'throw', 'aborted', 'usage-missing'])('poke failure %s never 
   expect((await h.command('status')).text).toContain({ drop: 'poke failed (dropped: refused by a hook)', throw: 'poke failed (threw: boom)', aborted: 'poke failed (aborted)', 'usage-missing': 'poke failed (usage unknown)' }[kind]);
   await h.advance(900000); expect(h.submits).toHaveLength(1);
 });
-test('commands override launch default but on never arms until next Stop', async () => {
+test('commands override launch default and on picks up the wait already standing', async () => {
   const h = new Harness({}, { CACHE_KEEPWARM_ENABLED: '0' }); await h.arm();
   expect(h.pending).toHaveLength(0); expect(h.status).toBeUndefined();
   expect((await h.command('status'))?.text).toContain('off (launch default)');
-  expect((await h.command('on'))?.text).toContain('on (session override)'); expect(h.pending).toHaveLength(0);
+  expect((await h.command('on'))?.text).toContain('on (session override)'); expect(h.pending.map(t => t.at)).toEqual([1792247650124]);
   await h.stop(); expect(h.pending).toHaveLength(1); await h.command('off'); expect(h.pending).toHaveLength(0);
   expect((await h.command('bad'))?.text).toContain('Usage: /keepwarm');
   await h.start(); expect((await h.command('status'))?.text).toContain('off (launch default)');
 });
-test('draft, terminal refinement and missing native inventory refuse visibly', async () => {
-  for (const kind of ['draft', 'ended', 'missing'] as const) {
+test('typing in the prompt box neither ends nor delays a wait: the poke goes out on time over the draft', async () => {
+  const h = new Harness(); await h.arm(); expect(h.pending.map(t => t.at)).toEqual([1792247650124]);
+  h.draft = 'half a thought'; await h.emit('prompt.edit', { text: '' }); await h.emit('prompt.change', { text: 'half a thought', cursor: 14, origin: { kind: 'engine' } });
+  expect(h.pending.map(t => t.at)).toEqual([1792247650124]); expect((await h.command('status')).text).toContain('warming [eligible]');
+  await h.command('on'); expect(h.pending.map(t => t.at)).toEqual([1792247650124]);
+  await h.advance(240000); expect(h.submits).toEqual([{ text: poke('1/4', '- agent `a`: Audit sk-test-123, pending 4m') }]);
+});
+test('terminal refinement and missing native inventory refuse visibly', async () => {
+  for (const kind of ['ended', 'missing'] as const) {
     const h = new Harness(); await h.start();
     await h.step();
-    if (kind === 'draft') h.draft = 'typing'; if (kind === 'ended') h.agents[0]!.status = 'killed';
+    if (kind === 'ended') h.agents[0]!.status = 'killed';
     if (kind === 'missing') await h.emit('classic.Stop', {}); else await h.stop([{ id: 'a', type: 'subagent', status: 'running', description: 'X' }]);
     if (kind === 'ended') await h.advance(240000);
     expect(h.submits).toHaveLength(0); expect(h.pending).toHaveLength(0);
-    expect((await h.command('status')).text).toContain({ draft: '[typing]', ended: '[ended]', missing: 'no background_tasks [inventory-unknown]' }[kind]);
+    expect((await h.command('status')).text).toContain({ ended: '[ended]', missing: 'no background_tasks [inventory-unknown]' }[kind]);
   }
 });
 test('a log failure is visible once and does not prevent warming', async () => {
