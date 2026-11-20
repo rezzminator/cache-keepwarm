@@ -38,7 +38,7 @@ Main-session state is published atomically to `${XDG_STATE_HOME:-$HOME/.local/st
 ## Cost and limits
 
 - A poke is a real turn: the forecast is the previous poke's actual cost on that thread, never less than a floor of the context read, the unwritten tail and the poke written, and a 1,000-token reply. A sub-agent poke adds the parent wake: the parent's last known context × 0.1 + (150 + 1000) × 2 + 1000 × 5 input-token equivalents. Actual usage is charged once, from the poke turn's own usage.
-- A main-chat poke is never sent while a turn runs or the user is typing.
+- A main-chat poke is never sent while a turn runs; a draft in the prompt box neither stops nor delays it.
 - A sub-agent poke needs a fresh `agent.list` showing the agent waiting, re-checked right before the send, plus locally attributed pending background tool ids or the native `parentId`; an unowned, finished, failed or killed agent is never poked, and a foreground tool call cannot be.
 - The parent wake is accepted, not suppressed: every native task-notification is delivered as Claude Code sends it.
 - Poke counts live in memory per thread and end with the episode; a restarted process starts over.

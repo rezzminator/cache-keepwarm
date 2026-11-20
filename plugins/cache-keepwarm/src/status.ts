@@ -10,7 +10,7 @@ function duration(ms: number): string { const minutes = Math.max(0, Math.floor(m
 function label(item: Pick<WaitItem, 'kind' | 'label'> | undefined): string { return item ? `${item.kind} "${item.label}"` : 'work'; }
 function limit(pokes: PokeLimit | undefined): string { return pokes ? ` ${pokes.count}/${pokes.max}` : ''; }
 const reasons: Record<ReasonCode, string> = {
-  'agent-not-waiting': 'stopped: sub-agent is not waiting', eligible: 'warming', off: 'off', busy: 'not warming: turn running', typing: 'not warming: user typing', stale: 'stopped: stale wait', 'in-flight': 'poke in flight',
+  'agent-not-waiting': 'stopped: sub-agent is not waiting', eligible: 'warming', off: 'off', busy: 'not warming: turn running', stale: 'stopped: stale wait', 'in-flight': 'poke in flight',
   'inventory-unknown': 'stopped: this Claude Code gives the Stop hook no background_tasks', 'nothing-pending': 'not warming: nothing tracked pending', ended: 'stopped: work ended',
   'usage-unknown': 'not warming: no main request seen since the plugin loaded', 'usage-invalid': 'not warming: invalid cache usage or clock', small: 'not warming: context too small',
   '1h-unproven': 'not warming: 1h refresh unproven', 'cache-cold': 'not warming: cache cold', 'expiry-safety': 'not warming: too close to expiry',

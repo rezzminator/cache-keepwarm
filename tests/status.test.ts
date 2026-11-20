@@ -19,7 +19,7 @@ test('clear, command and ledger share truthful values', () => {
 });
 
 test('empty status names no current wait exactly once', () => {
-  const view: StatusView = { enabled: true, source: 'launch', reason: 'typing', items: [], now: 0, warms: 0, nextInMs: 0, ttl: '5m', ttlSource: 'assumed', context: 50000, ledger: null, session: { spent: 0, warms: 0, episodes: 0, estimatedNet: 0, unknown: 0 }, lastOutcome: null };
+  const view: StatusView = { enabled: true, source: 'launch', reason: 'busy', items: [], now: 0, warms: 0, nextInMs: 0, ttl: '5m', ttlSource: 'assumed', context: 50000, ledger: null, session: { spent: 0, warms: 0, episodes: 0, estimatedNet: 0, unknown: 0 }, lastOutcome: null };
   expect(formatState(view).match(/no current wait/g)).toHaveLength(1);
 });
 

@@ -17,7 +17,7 @@ type Episode = { pending: boolean; items: WaitItem[]; known: boolean; started: n
  * resolved, which Claude Code does when the poke's turn has started, so an unbound poke binds to the next main step. */
 type Poke = { text: string; episode: Episode; sessionId: string; turnId?: string; entered?: boolean };
 type WarmCharge = { a: SubState; epoch: number; at: number; text: string; wake: number; turnId?: string; episode: NonNullable<SubState['episode']>; sessionId: string; owner?: State };
-type State = { stateDir: string; stateWarning?: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; typing: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; plog: PluginLogQueue; stores: Promise<void>; instance: string; logError?: string; logOff?: boolean; inactive?: boolean; ended?: EndedItem; detail?: string };
+type State = { stateDir: string; stateWarning?: string; stateWrites: Promise<void>; stateLast: string; charges: Map<string, WarmCharge>; subagents: Map<string, SubState>; options: Options; config: Record<string, unknown>; ttlEnv: TtlEnv; ttl: TtlResolution; observed: Ttl | null; anchor: Anchor | null; override: boolean | null; busy: boolean; epoch: number; inFlight: boolean; poke?: Poke; pokes: PokeCount | null; timer?: Timer; episode: Episode | null; closing: Episode | null; seen: Map<string, number>; reason: ReasonCode; now: number; nextAt: number; id: string; session: SessionLedger; lastOutcome: ClosedLedger | null; plog: PluginLogQueue; stores: Promise<void>; instance: string; logError?: string; logOff?: boolean; inactive?: boolean; ended?: EndedItem; detail?: string };
 async function readOptionEnv($: EngineInterface) {
   return { CACHE_KEEPWARM_SUBAGENTS: await $.env.get('CACHE_KEEPWARM_SUBAGENTS'), CACHE_KEEPWARM_ENABLED: await $.env.get('CACHE_KEEPWARM_ENABLED'), CACHE_KEEPWARM_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_MIN_CONTEXT'), CACHE_KEEPWARM_MAX_POKES: await $.env.get('CACHE_KEEPWARM_MAX_POKES'), CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT: await $.env.get('CACHE_KEEPWARM_SUBAGENT_MIN_CONTEXT') };
 }
@@ -94,7 +94,7 @@ async function restore($: EngineInterface, s: State, prune: boolean) {
 function queueLog($: EngineInterface, s: State, event: string) { void log($, s, event).catch(error => { $.ui.toast(`cache-keepwarm · logging failed (${String(error)})`); }); }
 function decision(s: State, epoch: number, fault?: 'poke-failed' | 'timer-failed'): Decision {
   const e = s.episode, ledger = e ? budgetLedger({ context: e.context, ttl: s.ttl.ttl, spent: e.spent, warms: e.warms }) : null;
-  return decideWarm({ fault: fault ?? (e?.failed ? 'poke-failed' : undefined), enabled: enabled(s), busy: s.busy, typing: s.typing, currentEpoch: s.epoch === epoch, inFlight: s.inFlight, known: e?.known ?? false, context: s.anchor?.context ?? null, minContext: s.options.minContext, lastSendAt: s.anchor?.at ?? null, now: s.now, ttl: s.ttl.ttl, warm1h: WARM_1H, items: (e?.items ?? []).map(i => ({ id: i.id, expectedBackAt: null, wake: ['agent', 'command', 'monitor', 'workflow'].includes(i.kind) ? 'yes' : 'unknown' })), ...(s.ended ? { endedId: s.ended.item.id } : {}), pokes: mainPokes(s), spent: e?.spent ?? 0, forecast: pokeForecast({ context: s.anchor?.context ?? 0, tail: s.anchor?.tail ?? 0, previous: e?.lastPoke ?? null }), saved: ledger?.allowance ?? 0 });
+  return decideWarm({ fault: fault ?? (e?.failed ? 'poke-failed' : undefined), enabled: enabled(s), busy: s.busy, currentEpoch: s.epoch === epoch, inFlight: s.inFlight, known: e?.known ?? false, context: s.anchor?.context ?? null, minContext: s.options.minContext, lastSendAt: s.anchor?.at ?? null, now: s.now, ttl: s.ttl.ttl, warm1h: WARM_1H, items: (e?.items ?? []).map(i => ({ id: i.id, expectedBackAt: null, wake: ['agent', 'command', 'monitor', 'workflow'].includes(i.kind) ? 'yes' : 'unknown' })), ...(s.ended ? { endedId: s.ended.item.id } : {}), pokes: mainPokes(s), spent: e?.spent ?? 0, forecast: pokeForecast({ context: s.anchor?.context ?? 0, tail: s.anchor?.tail ?? 0, previous: e?.lastPoke ?? null }), saved: ledger?.allowance ?? 0 });
 }
 function refuse($: EngineInterface, s: State, d: Decision) { stopTimers(s); s.reason = d.reason; s.detail = d.reason === 'poke-failed' ? s.episode?.failed ?? s.detail : d.itemId; paint($, s); }
 async function arm($: EngineInterface, s: State, epoch: number) {
@@ -121,7 +121,6 @@ async function fire($: EngineInterface, s: State, epoch: number) {
   s.timer = undefined;
   try {
     s.now = await $.clock.now(); if (s.epoch !== epoch) return;
-    const draft = await $.prompt.read(); if (s.epoch !== epoch) return; s.typing = draft.text.length > 0;
     try { const agents = await $.agent.list(); if (s.epoch !== epoch) return; const refined = reconcile(e.items, agents); e.items = refined.items; s.ended = refined.ended[0]; }
     catch (error) { if (s.epoch !== epoch) return; $.ui.toast(`cache-keepwarm · agent-list-failed (${String(error)})`); queueLog($, s, 'agent-list-failed'); }
     const now = await $.clock.now(); if (s.epoch !== epoch) return; s.now = now;
@@ -175,7 +174,7 @@ async function logSub($: EngineInterface, s: State, a: SubState, event: string, 
 function subWake(s: State, a: SubState): number { return wakeForecast({ parentContext: a.parentContext ?? s.anchor?.context ?? a.anchor?.context ?? 0 }); }
 function subDecision(s: State, a: SubState, epoch: number, status: string): Decision {
   const e = a.episode, anchor = a.anchor;
-  return decideWarm({ agentStatus: status, enabled: enabled(s) && s.options.subagents, busy: false, typing: false, currentEpoch: a.epoch === epoch, inFlight: s.charges.has(a.id), known: true, context: anchor?.context ?? null, minContext: s.options.subagentMinContext, lastSendAt: anchor?.at ?? null, now: s.now, ttl: a.ttl.ttl, warm1h: WARM_1H, items: [...a.owned.values()].map(i => ({ id: i.id, expectedBackAt: null, wake: 'yes' })), pokes: { count: pokesFor(a.pokes, subKey(a)).count, max: s.options.maxPokes }, spent: (e?.spent ?? 0) + (e?.wakes ?? 0), forecast: pokeForecast({ context: anchor?.context ?? 0, tail: anchor?.tail ?? 0, previous: e?.lastPoke ?? null }) + subWake(s, a), saved: e ? budgetLedger({ context: e.context, ttl: a.ttl.ttl, spent: e.spent, warms: e.warms }).allowance : 0 });
+  return decideWarm({ agentStatus: status, enabled: enabled(s) && s.options.subagents, busy: false, currentEpoch: a.epoch === epoch, inFlight: s.charges.has(a.id), known: true, context: anchor?.context ?? null, minContext: s.options.subagentMinContext, lastSendAt: anchor?.at ?? null, now: s.now, ttl: a.ttl.ttl, warm1h: WARM_1H, items: [...a.owned.values()].map(i => ({ id: i.id, expectedBackAt: null, wake: 'yes' })), pokes: { count: pokesFor(a.pokes, subKey(a)).count, max: s.options.maxPokes }, spent: (e?.spent ?? 0) + (e?.wakes ?? 0), forecast: pokeForecast({ context: anchor?.context ?? 0, tail: anchor?.tail ?? 0, previous: e?.lastPoke ?? null }) + subWake(s, a), saved: e ? budgetLedger({ context: e.context, ttl: a.ttl.ttl, spent: e.spent, warms: e.warms }).allowance : 0 });
 }
 async function subRoster($: EngineInterface, s: State, a: SubState, epoch: number) {
   const agents = await $.agent.list();
@@ -231,11 +230,18 @@ async function completeSub($: EngineInterface, s: State, a: SubState, turnId: st
   await armSub($, s, a);
 }
 
-async function toggle($: EngineInterface, s: State, on: boolean) { endSubs(s); s.override = on; cancel($, s, on ? 'idle' : 'off'); s.typing = false; s.now = await $.clock.now(); await log($, s, on ? 'on' : 'cancel'); paint($, s); await s.stateWrites; }
+/** `off` ends every wait; `on` arms the main wait already standing at once and keeps every sub-agent's, never waiting for another Stop. */
+async function toggle($: EngineInterface, s: State, on: boolean) {
+  s.override = on; s.now = await $.clock.now();
+  if (!on) { endSubs(s); cancel($, s, 'off'); }
+  else if (s.episode && !s.busy) { stopTimers(s); await arm($, s, s.epoch); }
+  else if (s.reason === 'off') s.reason = 'idle';
+  await log($, s, on ? 'on' : 'cancel'); paint($, s); await s.stateWrites;
+}
 export const register: Register = (on, options) => {
-  const s: State = { stateDir: '', stateWrites: Promise.resolve(), stateLast: '', charges: new Map(), subagents: new Map(), options: resolveOptions(options, {}), config: options, ttlEnv: {}, ttl: { ttl: '5m', source: 'assumed' }, observed: null, anchor: null, override: null, busy: false, typing: false, epoch: 0, inFlight: false, pokes: null, episode: null, closing: null, seen: new Map(), reason: 'idle', now: 0, nextAt: 0, id: '', session: emptySessionLedger(), lastOutcome: null, plog: new PluginLogQueue(undefined, 'cache-keepwarm'), stores: Promise.resolve(), instance: crypto.randomUUID() };
+  const s: State = { stateDir: '', stateWrites: Promise.resolve(), stateLast: '', charges: new Map(), subagents: new Map(), options: resolveOptions(options, {}), config: options, ttlEnv: {}, ttl: { ttl: '5m', source: 'assumed' }, observed: null, anchor: null, override: null, busy: false, epoch: 0, inFlight: false, pokes: null, episode: null, closing: null, seen: new Map(), reason: 'idle', now: 0, nextAt: 0, id: '', session: emptySessionLedger(), lastOutcome: null, plog: new PluginLogQueue(undefined, 'cache-keepwarm'), stores: Promise.resolve(), instance: crypto.randomUUID() };
   on('session.start', async ($, e, next) => {
-    departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.override = null; s.anchor = null; s.observed = null; s.busy = false; s.typing = false; s.closing = null; s.seen.clear(); s.session = emptySessionLedger(); s.lastOutcome = null; s.logError = undefined;
+    departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.override = null; s.anchor = null; s.observed = null; s.busy = false; s.closing = null; s.seen.clear(); s.session = emptySessionLedger(); s.lastOutcome = null; s.logError = undefined;
     s.options = resolveOptions(options, await readOptionEnv($)); const logDir = pluginLogDir(await $.env.get('PLUGIN_LOG_DIR'), await $.env.get('HOME'), 'cache-keepwarm'); s.plog = new PluginLogQueue(logDir, 'cache-keepwarm'); s.logOff = logDir === undefined; s.ttlEnv = await readTtlEnv($); s.ttl = resolveTtl(s.ttlEnv, null); s.id = await $.session.id(); s.now = await $.clock.now();
     const state = stateDirectory({ CACHE_KEEPWARM_STATE_DIR: await $.env.get('CACHE_KEEPWARM_STATE_DIR'), XDG_STATE_HOME: await $.env.get('XDG_STATE_HOME'), HOME: await $.env.get('HOME') }); s.stateDir = state.dir; s.stateWarning = state.warning; s.stateLast = '';
     $.command.register({ name: 'keepwarm', description: 'Control warming — /keepwarm [on|off|status] for this chat only; no argument shows state and spend.', argumentHint: '[on|off|status]', immediate: true });
@@ -246,10 +252,8 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     // This plugin's own poke is not activity: its turn runs, and the wait continues after it.
     if (e.origin?.kind === 'plugin' && s.poke && e.text === s.poke.text) { stopTimers(s); s.busy = true; return next(e); }
-    cancel($, s, 'busy', true); s.busy = true; s.typing = false; queueLog($, s, 'cancel'); return next(e);
+    cancel($, s, 'busy', true); s.busy = true; queueLog($, s, 'cancel'); return next(e);
   });
-  on('prompt.edit', async ($, e, next) => { cancel($, s, 'typing'); s.typing = true; queueLog($, s, 'cancel'); return next(e); });
-  on('prompt.change', async ($, e, next) => { if (e.text.length > 0) { cancel($, s, 'typing'); s.typing = true; queueLog($, s, 'cancel'); } return next(e); });
   on('session.receive', async ($, e, next) => { if (e.agentId) { const a = s.subagents.get(e.agentId); if (a && !warmReceipt([{ role: 'user', text: e.text, toolUses: [] }], s.charges.get(a.id)?.text ?? '').own) { activeSub(s, a); if (e.origin?.kind === 'task-notification') { const id = /<task-id>([^<]+)<\/task-id>/.exec(e.text)?.[1]; if (id) a.owned.delete(id); } } } if (!e.agentId) { cancel($, s, 'busy', true); s.busy = true; queueLog($, s, 'cancel'); } return next(e); });
   on('turn.step', async function* ($, e, next) {
     if (e.agentId) {
@@ -266,7 +270,7 @@ export const register: Register = (on, options) => {
     // A step of the poke's own turn re-anchors the wait; any other main step is real activity and ends it.
     const poking = !!s.poke && (s.poke.turnId === e.turnId || !s.poke.turnId && !!s.poke.entered);
     if (poking) { s.poke!.turnId = e.turnId; stopTimers(s); } else cancel($, s, 'busy', true);
-    s.busy = true; s.typing = false;
+    s.busy = true;
     const epoch = s.epoch, id = s.id, sentAt = await $.clock.now(), previous = s.anchor, result = yield* next(e), u = result.usage;
     if (s.epoch !== epoch || s.id !== id) return result;
     if (s.closing && !poking) { const closed = s.closing; s.closing = null; s.lastOutcome = closeLedger({ ledger: budgetLedger({ context: closed.context, ttl: s.ttl.ttl, spent: closed.spent, warms: closed.warms }), waitStartedAt: closed.started, originalExpiryAt: closed.originalExpiry, returnedAt: sentAt, usage: u, settled: !closed.pending, samePrefix: u ? u.model === closed.model && u.cache_read_input_tokens >= closed.context * 0.9 : null }); s.session = recordOutcome(s.session, s.lastOutcome); $.ui.toast(formatOutcome(s.lastOutcome), { timeoutMs: 10000 }); }
@@ -313,10 +317,9 @@ export const register: Register = (on, options) => {
     return result;
   });
   on('classic.Stop', async ($, e, next) => {
-    const previous = s.episode; stopTimers(s); const epoch = ++s.epoch; s.busy = false; s.typing = false;
+    const previous = s.episode; stopTimers(s); const epoch = ++s.epoch; s.busy = false;
     s.now = await $.clock.now(); if (s.epoch !== epoch) return next(e);
     const snapshot = fromStop(e.background_tasks, s.now); if (snapshot.known) s.seen = firstSeen(snapshot.items, s.seen, s.now); s.ended = snapshot.ended?.[0]; s.ttlEnv = await readTtlEnv($); s.ttl = resolveTtl(s.ttlEnv, s.observed);
-    const draft = await $.prompt.read(); if (s.epoch !== epoch) return next(e); s.typing = draft.text.length > 0;
     // The same episode continues across its pokes' Stops, keeping its spend, its last poke and any failure; a changed id set is a fresh key.
     if (previous) Object.assign(previous, { items: snapshot.items, known: snapshot.known, epoch });
     s.episode = previous ?? { pending: false, items: snapshot.items, known: snapshot.known, started: s.now, originalExpiry: (s.anchor?.at ?? s.now) + TTL_MS[s.ttl.ttl], context: s.anchor?.context ?? 0, model: s.anchor?.model ?? '', spent: 0, warms: 0, epoch, lastPoke: null };
@@ -335,7 +338,7 @@ export const register: Register = (on, options) => {
   on('classic.PostModelSwitch', async ($, e, next) => { endSubs(s); cancel($, s, 'idle'); s.anchor = null; s.observed = null; s.closing = null; await persist($, s); await log($, s, 'model-switch'); return next(e); });
   on('session.end', async ($, e, next) => {
     departSubs(s); endSubs(s); cancel($, s, 'idle'); s.poke = undefined; s.inFlight = false; s.closing = null; s.override = null; publishState($, s, true); await s.stateWrites; await persist($, s);
-    s.anchor = null; s.seen.clear(); s.id = ''; s.session = emptySessionLedger(); s.busy = false; s.typing = false; s.lastOutcome = null; s.observed = null; s.ttl = resolveTtl(s.ttlEnv, null);
+    s.anchor = null; s.seen.clear(); s.id = ''; s.session = emptySessionLedger(); s.busy = false; s.lastOutcome = null; s.observed = null; s.ttl = resolveTtl(s.ttlEnv, null);
     const result = await next(e);
     if (e.reason === 'clear' || e.reason === 'resume') {
       s.id = result.sessionId; s.now = await $.clock.now(); s.stateLast = '';

@@ -5,7 +5,7 @@
 **Keeps Claude Code prompt caches warm during background waits with visible pokes, for the main chat and waiting sub-agents, capped per wait and each under its own rewrite-saving budget.**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.7.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.8.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>
@@ -36,7 +36,7 @@ When the main chat ends a turn with tracked work pending, cache-keepwarm arms on
 
 It waits on four kinds of tracked work: agents, commands, Monitors and workflows. At most `maxPokes` pokes (default 4) go to one wait while its pending items stay the same and nothing else happens; real activity (your prompt, a real turn, an item finishing, a new item) starts a fresh count, so a chat that lives for days gets fresh pokes for each later wait. A completion notification or your prompt ends the episode before another poke can fire.
 
-Waiting sub-agents (`subagents`, on by default) have independent episodes, timers, budgets and poke counts: after an agent ends a turn with its own attributable background work pending, the same poke goes to the agent itself. The plugin re-checks the native roster immediately before sending and addresses only `waiting` agents, never finished, idle, failed or killed agents. User typing and main-chat turns do not cancel an agent's episode. Each sub-agent poke makes Claude Code hand the spawning parent (the main chat or a nested agent) an interim task-notification, which starts one real parent turn per poke; the budget forecast counts that parent wake, and the plugin never filters it.
+Waiting sub-agents (`subagents`, on by default) have independent episodes, timers, budgets and poke counts: after an agent ends a turn with its own attributable background work pending, the same poke goes to the agent itself. The plugin re-checks the native roster immediately before sending and addresses only `waiting` agents, never finished, idle, failed or killed agents. Main-chat turns do not cancel an agent's episode. Each sub-agent poke makes Claude Code hand the spawning parent (the main chat or a nested agent) an interim task-notification, which starts one real parent turn per poke; the budget forecast counts that parent wake, and the plugin never filters it.
 
 ## Install
 
@@ -75,7 +75,7 @@ A poke is a real turn, so it costs what a turn costs at the chat's effort, and o
 | --- | --- |
 | `/keepwarm` | Print the state: on or off and whether that is the launch default or the override, the current wait, the latest decision (a reached cap as `poke limit reached 4/4`), actual spend against the allowance, and live sub-agent count, labels, pokes and spend |
 | `/keepwarm status` | Same as no argument |
-| `/keepwarm on` | Override a disabled launch default; poking waits for the next qualifying Stop |
+| `/keepwarm on` | Override a disabled launch default; a wait already standing is armed at once |
 | `/keepwarm off` | Cancel all main and sub-agent timers and end their episodes; a poke already submitted still accounts its usage but cannot re-arm |
 
 Any other argument prints the usage and changes nothing. A new session or `/clear` resets the override to the launch default (`enabled`).
@@ -111,7 +111,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/cache-keepwarm/sessions/{sessionId}.json
 - `warming`: `eligible` or `in-flight`, only while the main view has waiting items. Without waiting items these reasons map to `on`.
 - `stopped`: `poke-limit`, `budget`, `poke-failed`, `timer-failed`, `stale`, `ended`.
 - `off`: `off`, or any view with `enabled: false` (its reason is normalized to `off`).
-- `on`: `agent-not-waiting`, `busy`, `typing`, `inventory-unknown`, `nothing-pending`, `usage-unknown`, `usage-invalid`, `small`, `1h-unproven`, `cache-cold`, `expiry-safety`, `wake-unknown`, `cannot-wake`, `imminent`, `marginal`, `resumed`, `idle`.
+- `on`: `agent-not-waiting`, `busy`, `inventory-unknown`, `nothing-pending`, `usage-unknown`, `usage-invalid`, `small`, `1h-unproven`, `cache-cold`, `expiry-safety`, `wake-unknown`, `cannot-wake`, `imminent`, `marginal`, `resumed`, `idle`.
 
 `on` means enabled, not currently warming; it does not promise a warm cache. `nextAt` is `null` unless the state is `warming` with a future timer. Session end deletes the file, and any temporary a killed writer left for the session, including before `/clear` or resume changes the id; the replacement session publishes its own view. Abrupt termination can leave a file: readers must check the Claude PID's liveness, not expire by age (a quiet `on` session is legitimate). A reused PID passes a liveness check alone: a reader also requires the process to have started before `updatedAt`. Resuming the same session in two processes shares one filename; the last atomic writer wins.
 
@@ -121,7 +121,7 @@ A write or deletion failure logs the full destination path and error through the
 
 Every timer fire is a decision made by one pure function; each outcome (poke, skip, stop) carries a short reason code that `/keepwarm status` shows and the log records. It does not poke:
 
-- while a main turn runs, or while you type: a draft edit invalidates the episode at once, and warming resumes only after the next qualifying main Stop;
+- while a main turn runs; a draft in the prompt box neither stops nor delays a poke, which is submitted as its own prompt;
 - when the cache is cold, or within 15 seconds of expiry, a window too close for a request to land;
 - when nothing tracked is pending, when everything pending is finished, killed or failed, or when the only tracked work is of a kind not known to wake the chat (such an item is shown, and refuses with `wake-unknown`);
 - when work is known to return before the cache expires: known timing comes from structured facts only, and an unknown return time is shown as unknown, never guessed from a task description or a command's text;
