@@ -1,3 +1,5 @@
+**Retired.** This plugin is folded into [cache-live-control](https://github.com/rezzminator/cache-live-control) (keep-warm ships there as of 0.8.0). This repository is archived.
+
 <div align="center">
 
 # cache-keepwarm
